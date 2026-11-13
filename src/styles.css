@@ -1925,6 +1925,20 @@ pre {
   }
 }
 
+[data-theme="dark"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    #1f2528,
+    #2b3337,
+    #1f2528
+  );
+  background-size: 200% 100%;
+}
+
+[data-theme="dark"] .sheet-card-skeleton {
+  border-color: var(--line-strong);
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -3037,6 +3051,171 @@ pre {
 #luckysheet-dataVerification-dropdown-List .dropdown-List-item:focus {
   background: var(--surface-2) !important;
   color: var(--ink) !important;
+}
+
+/* ---------- Dark-mode FortuneSheet chrome ---------- */
+
+[data-theme="dark"] .editor-workbook .fortune-name-box,
+[data-theme="dark"] .editor-workbook .fortune-fx-input {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-fx-input {
+  caret-color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-name-box-container,
+[data-theme="dark"] .editor-workbook .fortune-fx-editor {
+  border-color: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-toolbar-select,
+[data-theme="dark"] .editor-workbook .fortune-toolbar-color-picker,
+[data-theme="dark"] .editor-workbook .fortune-toolbar-more-container {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-md) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-toolbar-select-option {
+  color: var(--ink-2) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-toolbar-select-option:hover {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortuen-toolbar-text {
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-toolbar-subtext {
+  color: var(--muted) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-toolbar-menu-divider {
+  background: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item {
+  background: transparent !important;
+  color: var(--muted) !important;
+  border-color: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item:hover {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item-active {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+  border-top-color: var(--ember) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item-active:hover {
+  background: var(--surface-3) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheets-item-menu {
+  color: var(--muted-2) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-sheets-item-menu:hover {
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-sheettab-button,
+[data-theme="dark"] .editor-workbook .fortune-sheettab-scroll {
+  color: var(--muted) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-sheettab-button:hover,
+[data-theme="dark"] .editor-workbook .fortune-sheettab-scroll:hover {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-sheettab-container .boundary {
+  background: var(--surface) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-modal-container {
+  background: rgba(10, 12, 13, 0.58) !important;
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="dark"] .editor-workbook .fortune-dialog {
+  background: #ffffff !important;
+  color: #16181a !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-dialog input,
+[data-theme="dark"] .editor-workbook .fortune-dialog select,
+[data-theme="dark"] .editor-workbook .fortune-dialog textarea {
+  background-color: #ffffff !important;
+  color: #16181a !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-modal-dialog-icon-close {
+  color: #16181a !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-context-menu {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem {
+  color: var(--ink-2) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem:hover,
+[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem-hover {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .fortune-context-menu-divider {
+  background: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-search-c,
+[data-theme="dark"] .editor-workbook .luckysheet-formula-help-c {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-search-item {
+  background: transparent !important;
+  color: var(--ink-2) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-search-item-active {
+  background: var(--surface-2) !important;
+  border-color: var(--line) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-search-func {
+  color: var(--ink) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-search-detail {
+  color: var(--muted) !important;
+}
+
+[data-theme="dark"] .editor-workbook .luckysheet-formula-help-content {
+  color: var(--ink-2) !important;
 }
 
 /* ---------- Toasts ---------- */

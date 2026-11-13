@@ -79,7 +79,9 @@ export function saveProfileCache(profiles: Record<string, unknown>): void {
 
 export function getTheme(): "light" | "dark" {
   try {
-    const theme = localStorage.getItem(`${PREFIX}theme`);
+    const theme =
+      localStorage.getItem(`${PREFIX}theme`) ??
+      localStorage.getItem("formstr-sheets-theme");
     if (theme === "light" || theme === "dark") return theme;
   } catch {
     // ignore
@@ -93,6 +95,7 @@ export function getTheme(): "light" | "dark" {
 export function setTheme(theme: "light" | "dark"): void {
   try {
     localStorage.setItem(`${PREFIX}theme`, theme);
+    localStorage.removeItem("formstr-sheets-theme");
   } catch {
     // ignore
   }
