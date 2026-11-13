@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -17,6 +17,7 @@ import { LogoMark } from "./Logo";
 import { useAuth } from "../providers/AuthProvider";
 import { useToast } from "../providers/ToastProvider";
 import { cx, downloadText, shortNpub } from "../lib/utils";
+import { hasNostrExtension, watchNostrExtension } from "../lib/extension";
 
 type Mode = "extension" | "create" | "existing" | "bunker" | "backup";
 
@@ -24,7 +25,7 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
   const auth = useAuth();
   const { toast } = useToast();
   const [mode, setMode] = useState<Mode>(() =>
-    typeof window !== "undefined" && (window as unknown as { nostr?: unknown }).nostr
+    hasNostrExtension()
       ? "extension"
       : "create",
   );
@@ -38,10 +39,12 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [backup, setBackup] = useState<{ npub: string; ncryptsec: string } | null>(null);
   const [copied, setCopied] = useState("");
 
-  const hasExtension = useMemo(
-    () => typeof window !== "undefined" && !!(window as unknown as { nostr?: unknown }).nostr,
-    [],
-  );
+  const [hasExtension, setHasExtension] = useState(hasNostrExtension);
+
+  useEffect(() => {
+    if (!open) return;
+    return watchNostrExtension(setHasExtension);
+  }, [open]);
 
   const close = () => {
     if (mode === "backup") return;
@@ -63,6 +66,9 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
 
   const loginExtension = () =>
     run(async () => {
+      if (!hasNostrExtension()) {
+        throw new Error("Your extension isn't available on this page. Enable its access to this site, then retry. If needed, reload the page after enabling it.");
+      }
       await auth.loginWithExtension();
       toast("Signed in with your browser extension.", "success");
       onClose();
@@ -224,21 +230,10 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
           {mode === "extension" && (
             <div className="login-form">
               {hasExtension ? (
-                <>
-                  <p className="form-note">
-                    Your extension will ask for permission to sign and encrypt on
-                    your behalf.
-                  </p>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-full"
-                    disabled={busy}
-                    onClick={loginExtension}
-                  >
-                    {busy ? <Loader2 size={16} className="spin" /> : <Globe size={16} />}
-                    Connect extension
-                  </button>
-                </>
+                <p className="form-note">
+                  Your extension will ask for permission to sign and encrypt on
+                  your behalf.
+                </p>
               ) : (
                 <div className="callout callout-info">
                   <AlertCircle size={16} />
@@ -248,6 +243,15 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
                   </p>
                 </div>
               )}
+              <button
+                type="button"
+                className="btn btn-primary btn-full"
+                disabled={busy}
+                onClick={loginExtension}
+              >
+                {busy ? <Loader2 size={16} className="spin" /> : <Globe size={16} />}
+                {busy ? "Connecting…" : "Connect extension"}
+              </button>
             </div>
           )}
 
