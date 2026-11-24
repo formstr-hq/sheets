@@ -17,7 +17,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "paths": { "@formstr/sheets-formula": ["./packages/sheets-formula/src/index.ts"], "@formstr/sheets-grid": ["./packages/sheets-grid/src/index.ts"] }
   },
   "include": ["src"]
 }

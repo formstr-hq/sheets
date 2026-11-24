@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "parity": "node tools/parity-progress.mjs"
   },
   "dependencies": {
     "@formstr/drive-sdk": "^0.2.1",

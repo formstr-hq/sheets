@@ -1,0 +1,89 @@
+{
+  "note": "Status of every FortuneSheet feature our app uses, for the big-sheet grid. done = works in large sheet mode and is tested. Update this file when a feature lands; `pnpm parity` prints the progress bar.",
+  "groups": {
+    "Toolbar": {
+      "undo / redo": "done",
+      "format painter": "done",
+      "clear formatting": "done",
+      "currency, percent, decimals": "done",
+      "number format menu": "done",
+      "font, font size": "done",
+      "bold, italic, strike, underline": "done",
+      "font colour, fill colour": "done",
+      "borders (all, outer, inner, sides, none, colour, style)": "done",
+      "merge cells": "done",
+      "horizontal / vertical align": "done",
+      "text wrap": "done",
+      "text rotation": "done",
+      "freeze rows and columns": "done",
+      "conditional formatting": "done",
+      "filter": "done",
+      "link": "done",
+      "comment": "done",
+      "quick formula (SUM, AVERAGE...)": "done",
+      "data validation": "done",
+      "search / find and replace": "done",
+      "person tag, tag pill": "done"
+    },
+    "Cells and rows": {
+      "copy, cut, paste": "done",
+      "fill down / right (Ctrl+D, Ctrl+R)": "done",
+      "fill handle drag with series": "done",
+      "insert rows": "done",
+      "delete rows": "done",
+      "insert columns": "done",
+      "delete columns": "done",
+      "hide / show rows and columns": "done",
+      "set row height / column width": "done",
+      "sort selection": "done",
+      "sort with header row dialog": "done",
+      "drag to move selection": "done",
+      "multi-range selection": "done",
+      "select whole row / column / all": "done"
+    },
+    "Sheet chrome": {
+      "sheet tabs (switch)": "done",
+      "add / rename / delete / reorder tabs": "done",
+      "tab colour, hide tab, copy tab": "done",
+      "name box with jump to cell": "done",
+      "status bar totals": "done",
+      "zoom": "done",
+      "keyboard: arrows, Tab, Enter, Ctrl+arrows, Home/End, PageUp/Down": "done",
+      "keyboard: F2, type to overwrite, Delete": "done",
+      "keyboard: Ctrl+; date/time, Ctrl+Z/Y, Ctrl+B/I/U, Ctrl+F/H": "done",
+      "read-only mode": "done"
+    },
+    "Formulas": {
+      "typed formulas calculate": "done",
+      "dependents update (any size)": "done",
+      "cross-tab references": "done",
+      "references follow inserted/deleted rows and columns": "done",
+      "450 FortuneSheet functions": "partial",
+      "formula bar with token colours": "partial",
+      "autocomplete and argument help": "done",
+      "click/drag to insert references": "partial",
+      "recalculate formulas from the file on open": "partial",
+      "volatile functions (NOW, RAND...)": "done",
+      "manual calculation mode": "done"
+    },
+    "Data features": {
+      "data validation (dropdown, number, date, text length...)": "done",
+      "conditional formatting (rules, data bars, colour scales)": "done",
+      "hyperlinks": "done",
+      "comments": "done",
+      "filter by value / colour": "done",
+      "images": "todo"
+    },
+    "Persistence and platform": {
+      "open huge sheets (100 MB / 25M cells)": "done",
+      "save and reload everything above": "done",
+      "undo history for structural edits": "done",
+      "xlsx import (streaming)": "done",
+      "xlsx export (streaming)": "done",
+      "live collaboration": "todo",
+      "automated parity test against FortuneSheet": "partial",
+      "FortuneSheet removed": "todo",
+      "packages published": "todo"
+    }
+  }
+}

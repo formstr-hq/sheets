@@ -1,7 +1,7 @@
 // Toolbar for large sheet mode, laid out like the main editor's (FortuneSheet) toolbar. Buttons
 // change the selected cells' style or number format; the ones that need the whole sheet in memory
 // (filters, conditional formats, freeze, ...) are shown disabled with the reason.
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlignCenter,
   AlignLeft,
@@ -49,7 +49,20 @@ export const NUMBER_FORMATS: { label: string; format: string | undefined }[] = [
   { label: "Percent", format: "0.00%" },
   { label: "Currency", format: "$#,##0.00" },
   { label: "Date", format: "yyyy-mm-dd" },
+  { label: "Scientific", format: "0.00E+00" },
+  { label: "Accounting", format: "_($* #,##0.00_);_($* (#,##0.00);_($* \"-\"??_);_(@_)" },
+  { label: "Time", format: "h:mm:ss AM/PM" },
+  { label: "Time (24 hour)", format: "hh:mm:ss" },
+  { label: "Date and time", format: "yyyy-mm-dd hh:mm:ss" },
+  { label: "Long date", format: "mmmm d, yyyy" },
+  { label: "Euro", format: "[$€-407] #,##0.00" },
+  { label: "British pound", format: "[$£-809]#,##0.00" },
+  { label: "Japanese yen", format: "[$¥-411]#,##0" },
+  { label: "Indian rupee", format: "[$₹-4009]#,##0.00" },
+  { label: "Swiss franc", format: "[$CHF-807] #,##0.00" },
+  { label: "Negative in red", format: "#,##0.00;[Red]-#,##0.00" },
 ];
+const ROTATIONS = ["No rotation", "Tilt up", "Tilt down", "Stacked", "Rotate up", "Rotate down"];
 const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 30, 36];
 const NOT_HERE = "Not available in large sheet mode yet";
 
@@ -93,6 +106,21 @@ export function BigSheetToolbar({
   onPaint,
   onClear,
   onStyle,
+  freeze,
+  zoom,
+  onQuickFormula,
+  onSearch,
+  onLink,
+  onComment,
+  onValidation,
+  onPerson,
+  onTagPill,
+  onConditional,
+  filtered,
+  onFilter,
+  onBorder,
+  onMerge,
+  canSplit,
   onFormat,
   onDecimals,
 }: {
@@ -107,17 +135,40 @@ export function BigSheetToolbar({
   onPaint: () => void;
   onClear: () => void;
   onStyle: (patch: StylePatch) => void;
+  /** Frozen panes: how many rows/columns are frozen now, the choices, and how to apply one. */
+  freeze: { rows: number; columns: number; options: { label: string; rows: number; columns: number }[]; apply: (rows: number, columns: number) => void };
+  /** Writes SUM/AVERAGE/... of each selected column just below the selection. */
+  onQuickFormula: (name: "SUM" | "AVERAGE" | "COUNT" | "MAX" | "MIN") => void;
+  onSearch: () => void;
+  onLink: () => void;
+  onComment: () => void;
+  onValidation: () => void;
+  onPerson: () => void;
+  onTagPill: () => void;
+  onConditional: () => void;
+  /** Is a filter on? */
+  filtered: boolean;
+  onFilter: () => void;
+  /** Zoom as a fraction (1 = 100%) and how to change it. */
+  zoom: { value: number; set: (zoom: number) => void };
+  /** Puts a border on the selection. */
+  onBorder: (type: "all" | "outside" | "inside" | "top" | "bottom" | "left" | "right" | "none", color: string, style: string) => void;
+  onMerge: (how: "all" | "rows" | "columns" | "split") => void;
+  /** Is there a merged block in the selection (so "Unmerge" does something)? */
+  canSplit: boolean;
   onFormat: (format: string | undefined) => void;
   onDecimals: (delta: number) => void;
 }) {
   const off = !canEdit;
+  const [borderColor, setBorderColor] = useState("#000000");
+  const [borderStyle, setBorderStyle] = useState("thin");
   const toggle = (key: "bold" | "italic" | "strike" | "underline") => onStyle({ [key]: !style[key] });
   return (
     <div className="big-toolbar" role="toolbar">
-      <Button title="Tag a person" disabled>
+      <Button title="Tag a person" disabled={off} onClick={onPerson}>
         <UserRound size={16} />
       </Button>
-      <Button title="Add a tag pill" disabled>
+      <Button title="Add a tag pill" disabled={off} onClick={onTagPill}>
         <Tag size={16} />
       </Button>
       <Divider />
@@ -212,12 +263,69 @@ export function BigSheetToolbar({
           onChange={(event) => onStyle({ background: event.target.value })}
         />
       </label>
-      <Button title="Borders" disabled>
+      <label className="big-tool is-select" title="Zoom (Ctrl + wheel)">
+        <select className="big-tool-select" value={String(zoom.value)} onChange={(event) => zoom.set(Number(event.target.value))}>
+          {[0.5, 0.75, 0.9, 1, 1.25, 1.5, 2].map((z) => (
+            <option key={z} value={String(z)}>
+              {Math.round(z * 100)}%
+            </option>
+          ))}
+          {![0.5, 0.75, 0.9, 1, 1.25, 1.5, 2].includes(zoom.value) && <option value={String(zoom.value)}>{Math.round(zoom.value * 100)}%</option>}
+        </select>
+      </label>
+      <label className={cx("big-tool is-select", off && "is-disabled")} title="Borders">
         <Grid2x2 size={16} />
-      </Button>
-      <Button title="Merge cells" disabled>
+        <select
+          className="big-tool-select"
+          disabled={off}
+          value=""
+          onChange={(event) => event.target.value && onBorder(event.target.value as Parameters<typeof onBorder>[0], borderColor, borderStyle)}
+        >
+          <option value="" disabled>
+            Borders
+          </option>
+          <option value="all">All borders</option>
+          <option value="outside">Outer borders</option>
+          <option value="inside">Inner borders</option>
+          <option value="top">Top border</option>
+          <option value="bottom">Bottom border</option>
+          <option value="left">Left border</option>
+          <option value="right">Right border</option>
+          <option value="none">No borders</option>
+        </select>
+      </label>
+      <label className={cx("big-tool is-select", off && "is-disabled")} title="Border line style">
+        <select className="big-tool-select" disabled={off} value={borderStyle} onChange={(event) => setBorderStyle(event.target.value)}>
+          <option value="thin">Thin</option>
+          <option value="medium">Medium</option>
+          <option value="thick">Thick</option>
+          <option value="dashed">Dashed</option>
+          <option value="dotted">Dotted</option>
+        </select>
+      </label>
+      <label className={cx("big-tool", off && "is-disabled")} title="Border color">
+        <span style={{ width: 14, height: 14, border: "2px solid " + borderColor, borderRadius: 3 }} />
+        <input type="color" disabled={off} value={borderColor} onChange={(event) => setBorderColor(event.target.value)} />
+      </label>
+      <label className={cx("big-tool is-select", off && "is-disabled")} title="Merge cells">
         <TableCellsMerge size={16} />
-      </Button>
+        <select
+          className="big-tool-select"
+          disabled={off}
+          value=""
+          onChange={(event) => event.target.value && onMerge(event.target.value as Parameters<typeof onMerge>[0])}
+        >
+          <option value="" disabled>
+            Merge
+          </option>
+          <option value="all">Merge all</option>
+          <option value="rows">Merge each row</option>
+          <option value="columns">Merge each column</option>
+          <option value="split" disabled={!canSplit}>
+            Unmerge
+          </option>
+        </select>
+      </label>
       <Divider />
       <Button title="Align left" active={style.align === "left"} disabled={off} onClick={() => onStyle({ align: "left" })}>
         <AlignLeft size={16} />
@@ -250,32 +358,81 @@ export function BigSheetToolbar({
       <Button title="Wrap text" active={!!style.wrap} disabled={off} onClick={() => onStyle({ wrap: !style.wrap })}>
         <WrapText size={16} />
       </Button>
-      <Button title="Text rotation" disabled>
+      <label className={cx("big-tool is-select", off && "is-disabled")} title="Text rotation">
         <RotateCw size={16} />
-      </Button>
+        <select
+          className="big-tool-select"
+          disabled={off}
+          value=""
+          onChange={(event) => event.target.value !== "" && onStyle({ rotation: Number(event.target.value) || undefined })}
+        >
+          <option value="" disabled>
+            {style.rotation ? ROTATIONS[style.rotation] : "Rotate"}
+          </option>
+          {ROTATIONS.map((label, code) => (
+            <option key={label} value={code}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
       <Divider />
-      <Button title="Freeze" disabled>
+      <label className="big-tool is-select" title="Freeze rows and columns">
         <Snowflake size={16} />
-      </Button>
-      <Button title="Conditional formatting" disabled>
+        <select
+          className="big-tool-select"
+          value=""
+          onChange={(event) => {
+            const choice = freeze.options[Number(event.target.value)];
+            if (choice) freeze.apply(choice.rows, choice.columns);
+          }}
+        >
+          <option value="" disabled>
+            {freeze.rows || freeze.columns
+              ? `Frozen: ${[freeze.rows ? `${freeze.rows} row${freeze.rows > 1 ? "s" : ""}` : "", freeze.columns ? `${freeze.columns} col${freeze.columns > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}`
+              : "Freeze"}
+          </option>
+          {freeze.options.map((item, index) => (
+            <option key={item.label} value={index}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Button title="Conditional formatting" disabled={off} onClick={onConditional}>
         <Palette size={16} />
       </Button>
-      <Button title="Filter" disabled>
+      <Button title="Filter by the values of the active column" active={filtered} disabled={off} onClick={onFilter}>
         <Filter size={16} />
       </Button>
-      <Button title="Insert link" disabled>
+      <Button title="Insert link" disabled={off} onClick={onLink}>
         <Link size={16} />
       </Button>
-      <Button title="Comment" disabled>
+      <Button title="Comment" disabled={off} onClick={onComment}>
         <MessageSquare size={16} />
       </Button>
-      <Button title="Formulas" disabled>
+      <label className={cx("big-tool is-select", off && "is-disabled")} title="Quick formula: total of the selected columns, written below them">
         <Sigma size={16} />
-      </Button>
-      <Button title="Data validation" disabled>
+        <select
+          className="big-tool-select"
+          disabled={off}
+          value=""
+          onChange={(event) => event.target.value && onQuickFormula(event.target.value as Parameters<typeof onQuickFormula>[0])}
+        >
+          <option value="" disabled>
+            Σ
+          </option>
+          <option value="SUM">Sum</option>
+          <option value="AVERAGE">Average</option>
+          <option value="COUNT">Count</option>
+          <option value="MAX">Max</option>
+          <option value="MIN">Min</option>
+        </select>
+      </label>
+      <Button title="Data validation" disabled={off} onClick={onValidation}>
         <ListChecks size={16} />
       </Button>
-      <Button title="Search" disabled>
+      <Button title="Find (Ctrl+F)" onClick={onSearch}>
         <Search size={16} />
       </Button>
     </div>
