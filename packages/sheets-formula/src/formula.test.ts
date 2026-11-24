@@ -351,3 +351,36 @@ describe("number formats shown in big sheets", () => {
     expect(formatValue(-2, "#,##0.00;[Red]-#,##0.00")).toBe("-2.00");
   });
 });
+
+describe("INDIRECT, OFFSET, CELL, MDETERM, MINVERSE", () => {
+  const data = book({ Sheet1: { "0:0": 10, "1:0": 20, "2:0": 30, "0:1": 1, "1:1": 2 }, Other: { "0:0": 99 } });
+  it("INDIRECT follows text to a cell, range or other sheet", () => {
+    expect(calc('=INDIRECT("A2")', data)).toBe(20);
+    expect(calc('=SUM(INDIRECT("A1:A3"))', data)).toBe(60);
+    expect(calc('=INDIRECT("Other!A1")', data)).toBe(99);
+    expect(calc('=INDIRECT("A"&2)', data)).toBe(20);
+    expect(String(calc('=INDIRECT("nonsense here")', data))).toBe("#REF!");
+  });
+  it("OFFSET moves and resizes a reference", () => {
+    expect(calc("=OFFSET(A1,1,0)", data)).toBe(20);
+    expect(calc("=SUM(OFFSET(A1,0,0,3,1))", data)).toBe(60);
+    expect(calc("=SUM(OFFSET(A1:A2,1,0))", data)).toBe(50);
+    expect(String(calc("=OFFSET(A1,-1,0)", data))).toBe("#REF!");
+  });
+  it("CELL reports address, row, column, contents and type", () => {
+    expect(calc('=CELL("address",B2)', data)).toBe("$B$2");
+    expect(calc('=CELL("row",B2)', data)).toBe(2);
+    expect(calc('=CELL("col",B2)', data)).toBe(2);
+    expect(calc('=CELL("contents",A3)', data)).toBe(30);
+    expect(calc('=CELL("type",A3)', data)).toBe("v");
+    expect(calc('=CELL("type",D9)', data)).toBe("b");
+  });
+  it("MDETERM and MINVERSE work on square matrices", () => {
+    expect(calc("=MDETERM({1,2;3,4})")).toBe(-2);
+    expect(calc("=MDETERM({2,0;0,3})")).toBe(6);
+    expect(calc("=INDEX(MINVERSE({4,7;2,6}),1,1)")).toBeCloseTo(0.6, 9);
+    expect(calc("=INDEX(MINVERSE({4,7;2,6}),1,2)")).toBeCloseTo(-0.7, 9);
+    expect(String(calc("=MINVERSE({1,2;2,4})"))).toBe("#NUM!");
+    expect(String(calc("=MDETERM({1,2,3})"))).toBe("#VALUE!");
+  });
+});

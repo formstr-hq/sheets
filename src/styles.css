@@ -1850,8 +1850,16 @@ pre {
   font-size: 10px;
 }
 
-.sheet-card-meta > span:nth-child(2) {
+.sheet-card-meta > .sheet-card-stats {
   margin-left: auto;
+}
+.sheet-card-size {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
 .sheet-card-new {
@@ -2896,18 +2904,6 @@ pre {
   margin: 8px 12px 0;
 }
 
-.editor-workbook {
-  flex: 1;
-  min-height: 0;
-  background: #fff;
-  overflow: hidden;
-  color-scheme: light;
-}
-
-.editor-workbook .fortune-container {
-  height: 100%;
-  font-family: var(--font);
-}
 
 .editor-statusbar {
   flex: none;
@@ -2958,264 +2954,6 @@ pre {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
-}
-
-/* ---------- FortuneSheet skin ---------- */
-
-/* The sheet stays paper-white even in dark mode, so its inline editor must
-   keep dark text rather than inheriting the app's light-on-dark ink. */
-.editor-workbook .luckysheet-input-box,
-.editor-workbook .luckysheet-input-box-inner,
-.editor-workbook .luckysheet-cell-input {
-  color: #16181a !important;
-  caret-color: #16181a !important;
-}
-
-.editor-workbook .luckysheet-input-box-inner {
-  background-color: #ffffff !important;
-}
-
-.fortune-toolbar {
-  background: var(--surface) !important;
-  border-bottom: 1px solid var(--line) !important;
-  font-family: var(--font) !important;
-}
-
-.fortune-toolbar-button:hover,
-.fortune-toolbar-combo-button:hover,
-.fortune-toolbar-select:hover {
-  background: var(--surface-2) !important;
-  border-radius: 7px !important;
-}
-
-.fortune-toolbar-divider {
-  background: var(--line) !important;
-}
-
-.fortune-name-box-container,
-.fortune-fx-editor {
-  background: var(--surface) !important;
-  border-color: var(--line) !important;
-  font-family: var(--font) !important;
-}
-
-.fortune-fx-input {
-  font-family: var(--mono) !important;
-  font-size: 11px !important;
-}
-
-.fortune-sheettab-container {
-  background: var(--surface) !important;
-  border-top: 1px solid var(--line) !important;
-}
-
-.fortune-sheettab-button:hover {
-  background: var(--surface-2) !important;
-}
-
-.fortune-stat-area {
-  background: var(--surface) !important;
-  border-top: 1px solid var(--line) !important;
-  font-family: var(--font) !important;
-  color: var(--muted) !important;
-}
-
-.fortune-context-menu {
-  border-radius: 11px !important;
-  border-color: var(--line) !important;
-  box-shadow: var(--shadow-md) !important;
-  font-family: var(--font) !important;
-}
-
-#luckysheet-dataVerification-dropdown-List {
-  background: var(--surface) !important;
-  border: 1px solid var(--line) !important;
-  border-radius: 10px !important;
-  box-shadow: var(--shadow-md) !important;
-  padding: 4px !important;
-  min-width: 140px !important;
-  overflow: hidden !important;
-  font-family: var(--font) !important;
-}
-
-#luckysheet-dataVerification-dropdown-List .dropdown-List-item {
-  padding: 7px 10px !important;
-  border-radius: 7px !important;
-  color: var(--ink-2) !important;
-  font-size: 12px !important;
-  line-height: 1.3 !important;
-  white-space: nowrap !important;
-}
-
-#luckysheet-dataVerification-dropdown-List .dropdown-List-item:hover,
-#luckysheet-dataVerification-dropdown-List .dropdown-List-item:focus {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-}
-
-/* ---------- Dark-mode FortuneSheet chrome ---------- */
-
-[data-theme="dark"] .editor-workbook .fortune-name-box,
-[data-theme="dark"] .editor-workbook .fortune-fx-input {
-  background: var(--surface) !important;
-  color: var(--ink) !important;
-  border-color: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-fx-input {
-  caret-color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-name-box-container,
-[data-theme="dark"] .editor-workbook .fortune-fx-editor {
-  border-color: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-toolbar-select,
-[data-theme="dark"] .editor-workbook .fortune-toolbar-color-picker,
-[data-theme="dark"] .editor-workbook .fortune-toolbar-more-container {
-  background: var(--surface) !important;
-  border: 1px solid var(--line) !important;
-  box-shadow: var(--shadow-md) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-toolbar-select-option {
-  color: var(--ink-2) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-toolbar-select-option:hover {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortuen-toolbar-text {
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-toolbar-subtext {
-  color: var(--muted) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-toolbar-menu-divider {
-  background: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item {
-  background: transparent !important;
-  color: var(--muted) !important;
-  border-color: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item:hover {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item-active {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-  border-top-color: var(--ember) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheet-area div.luckysheet-sheets-item-active:hover {
-  background: var(--surface-3) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheets-item-menu {
-  color: var(--muted-2) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-sheets-item-menu:hover {
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-sheettab-button,
-[data-theme="dark"] .editor-workbook .fortune-sheettab-scroll {
-  color: var(--muted) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-sheettab-button:hover,
-[data-theme="dark"] .editor-workbook .fortune-sheettab-scroll:hover {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-sheettab-container .boundary {
-  background: var(--surface) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-modal-container {
-  background: rgba(10, 12, 13, 0.58) !important;
-  backdrop-filter: blur(4px);
-}
-
-[data-theme="dark"] .editor-workbook .fortune-dialog {
-  background: #ffffff !important;
-  color: #16181a !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-dialog input,
-[data-theme="dark"] .editor-workbook .fortune-dialog select,
-[data-theme="dark"] .editor-workbook .fortune-dialog textarea {
-  background-color: #ffffff !important;
-  color: #16181a !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-modal-dialog-icon-close {
-  color: #16181a !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-context-menu {
-  background: var(--surface) !important;
-  color: var(--ink) !important;
-  border-color: var(--line) !important;
-  box-shadow: var(--shadow-md) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem {
-  color: var(--ink-2) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem:hover,
-[data-theme="dark"] .editor-workbook .luckysheet-cols-menu .luckysheet-cols-menuitem-hover {
-  background: var(--surface-2) !important;
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .fortune-context-menu-divider {
-  background: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-search-c,
-[data-theme="dark"] .editor-workbook .luckysheet-formula-help-c {
-  background: var(--surface) !important;
-  color: var(--ink) !important;
-  border-color: var(--line) !important;
-  box-shadow: var(--shadow-md) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-search-item {
-  background: transparent !important;
-  color: var(--ink-2) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-search-item-active {
-  background: var(--surface-2) !important;
-  border-color: var(--line) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-search-func {
-  color: var(--ink) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-search-detail {
-  color: var(--muted) !important;
-}
-
-[data-theme="dark"] .editor-workbook .luckysheet-formula-help-content {
-  color: var(--ink-2) !important;
 }
 
 /* ---------- Toasts ---------- */
@@ -3745,6 +3483,13 @@ pre {
 .big-cell.is-selected { outline: 2px solid #0188fb; outline-offset: -1px; z-index: 1; }
 .big-cell.is-in-range { background-image: linear-gradient(rgba(1, 136, 251, 0.1), rgba(1, 136, 251, 0.1)); }
 .big-cell-input { z-index: 2; padding: 0 3px; font-size: 11pt; border: 2px solid #0188fb; background: #fff; color: #000; outline: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); }
+.big-cell-input.is-formula { color: transparent; caret-color: #000; }
+.big-cell-input.is-formula::selection { background: rgba(1, 136, 251, 0.25); color: transparent; }
+.big-cell-hl { position: absolute; z-index: 3; box-sizing: border-box; padding: 0 3px; border: 2px solid transparent; font-family: var(--font), Arial, sans-serif; font-size: 11pt; white-space: pre; overflow: hidden; pointer-events: none; display: flex; align-items: center; color: #000; }
+.big-cell-hl > span { display: inline-block; }
+.big-cell-hl .ft-function { font-weight: 700; }
+.big-cell-hl .ft-string { color: #15803d; }
+.big-cell-hl .ft-number { color: #1d4ed8; }
 .big-row-head, .big-col-head, .big-corner { background: #f8f9fa; color: #5f6368; text-align: center; z-index: 3; border-right: 1px solid #d4d4d4; border-bottom: 1px solid #d4d4d4; font-size: 12px; font-variant-numeric: tabular-nums; }
 .big-row-head { left: 0; line-height: 29px; font-size: 11px; }
 .big-col-head { top: 0; line-height: 27px; }

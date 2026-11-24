@@ -2,7 +2,7 @@
 // the streaming importer (xlsxStream), so both produce identical cells. Pure: type-only imports
 // from exceljs/@fortune-sheet, so a worker can use it without pulling in the DOM helpers.
 import type * as ExcelJS from "exceljs";
-import type { Cell } from "@fortune-sheet/core";
+import type { Cell } from "./legacy/fortuneFormat";
 import {
   formatNumberForDisplay,
   isDateFormat,

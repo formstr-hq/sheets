@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Sheet } from "@fortune-sheet/core";
+import type { Sheet } from "./legacy/fortuneFormat";
 import { activeSheetId, storedSheets, toStoredSheet } from "./sheetData";
 
 describe("FortuneSheet adapters", () => {

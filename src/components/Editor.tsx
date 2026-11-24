@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Workbook, type WorkbookInstance } from "@fortune-sheet/react";
-import type { Hooks, Settings, Sheet } from "@fortune-sheet/core";
 import type { Event } from "nostr-tools";
 import {
   AlertTriangle,
@@ -21,18 +19,16 @@ import {
   MoreHorizontal,
   RefreshCw,
   Share2,
-  Tag,
   Trash2,
-  UserRound,
 } from "lucide-react";
 import { AUTOSAVE_ENABLED } from "../lib/constants";
+import type { BigSheetStore } from "../lib/v2/bigSheet";
 import { OPEN_MAX_CELLS, SheetTooLargeToOpenError, type SheetRootV2, type SheetSize } from "../lib/v2/root";
 import { BigSheetView } from "./BigSheetView";
 import { Avatar } from "./Avatar";
 import { Dialog } from "./Dialog";
 import { Menu, MenuItem, MenuSeparator } from "./Menu";
 import { LogoMark } from "./Logo";
-import { PersonDialog, TagDialog, type PersonChoice } from "./CellMetaDialogs";
 import { ShareDialog } from "./ShareDialog";
 import { StorageServersDialog } from "./StorageServersDialog";
 import { FileInfoDialog } from "./FileInfoDialog";
@@ -40,92 +36,18 @@ import { useAuth } from "../providers/AuthProvider";
 import { useLibrary } from "../providers/LibraryProvider";
 import { useProfiles } from "../providers/ProfileProvider";
 import { useToast } from "../providers/ToastProvider";
-import { drawCellPill } from "../lib/cellRender";
 import { saveDocCache } from "../lib/local";
-import { sheetsForUpdate } from "../lib/sheetData";
-import { localDeviceIds, SheetIdTracker } from "../lib/workbook/sheetIds";
-import {
-  collectReferencedPubkeys,
-  fortuneSheetsToWorkbook,
-  workbookToFortuneSheets,
-} from "../lib/workbook";
+import { collectReferencedPubkeys } from "../lib/workbook";
 import { exportActiveSheetCsv, exportSpreadsheet } from "../lib/xlsx";
-import { formatRelativeTime, shortNpub, toNpub } from "../lib/utils";
-import type { LibraryEntry, SaveState, SheetDocument, UserRef } from "../lib/types";
-
-const TOOLBAR_ITEMS = [
-  "undo",
-  "redo",
-  "|",
-  "format-painter",
-  "clear-format",
-  "|",
-  "currency-format",
-  "percentage-format",
-  "number-decrease",
-  "number-increase",
-  "format",
-  "|",
-  "font",
-  "|",
-  "font-size",
-  "|",
-  "bold",
-  "italic",
-  "strike-through",
-  "underline",
-  "|",
-  "font-color",
-  "background",
-  "border",
-  "merge-cell",
-  "|",
-  "horizontal-align",
-  "vertical-align",
-  "text-wrap",
-  "text-rotation",
-  "|",
-  "freeze",
-  "conditionFormat",
-  "filter",
-  "link",
-  "comment",
-  "quick-formula",
-  "dataVerification",
-  "search",
-];
-
-const CELL_CONTEXT_MENU = [
-  "copy",
-  "paste",
-  "|",
-  "insert-row",
-  "insert-column",
-  "delete-row",
-  "delete-column",
-  "delete-cell",
-  "hide-row",
-  "hide-column",
-  "set-row-height",
-  "set-column-width",
-  "|",
-  "clear",
-  "sort",
-  "orderAZ",
-  "orderZA",
-  "filter",
-  "data",
-  "cell-format",
-];
-
-const SHEET_TAB_CONTEXT_MENU = ["delete", "copy", "rename", "color", "hide", "|", "move"];
-
-interface SelectionRange {
-  row: number[];
-  column: number[];
-}
+import { formatRelativeTime, shortNpub } from "../lib/utils";
+import type { LibraryEntry, SaveState, SheetDocument } from "../lib/types";
 
 type RemoteUpdate = { doc: SheetDocument; event: Event };
+
+/** Do two documents hold the same sheets (ignoring when they were saved)? */
+function sameContent(a: SheetDocument, b: SheetDocument): boolean {
+  return JSON.stringify(a.sheets) === JSON.stringify(b.sheets);
+}
 
 function roleRank(role: LibraryEntry["role"]): number {
   return role === "owner" ? 2 : role === "editor" ? 1 : 0;
@@ -187,8 +109,6 @@ export function Editor() {
 
   const [sheetDocument, setSheetDocument] = useState<SheetDocument | null>(null);
   const documentRef = useRef<SheetDocument | null>(null);
-  const [initialSheets, setInitialSheets] = useState<Sheet[]>([]);
-  const [workbookVersion, setWorkbookVersion] = useState(0);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -202,23 +122,14 @@ export function Editor() {
   const dirtyRef = useRef(false);
   const [remoteUpdate, setRemoteUpdate] = useState<RemoteUpdate | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  const [personOpen, setPersonOpen] = useState(false);
-  const [tagOpen, setTagOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
   const [infoDoc, setInfoDoc] = useState<SheetDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const selectionRef = useRef<SelectionRange[]>([]);
-
-  const workbookRef = useRef<WorkbookInstance>(null);
-  const sheetsRef = useRef<Sheet[]>([]);
-  // Row and column ids follow the editor's inserts and deletes, so a row keeps its id when others move.
-  const idsRef = useRef<SheetIdTracker | null>(null);
-  idsRef.current ??= new SheetIdTracker(localDeviceIds());
-  const loadedRef = useRef(false);
+  // The grid's store: it holds the sheet being edited (every tab, every edit).
+  const storeRef = useRef<BigSheetStore | null>(null);
   const applyingRemoteRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
-  const loadTimerRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
   const queuedSaveRef = useRef(false);
   const lastEventAtRef = useRef<number | undefined>(undefined);
@@ -237,24 +148,13 @@ export function Editor() {
     entryRef.current = entry;
   }, [entry]);
 
-  const buildCurrentWorkbook = useCallback(
-    (currentDoc: SheetDocument, updatedAt = Date.now()) => {
-      const activeId = sheetsRef.current.find((sheet) => sheet.status === 1)?.id;
-      const sheets =
-        sheetsRef.current.length > 0
-          ? sheetsRef.current
-          : workbookToFortuneSheets(currentDoc);
-      const built = fortuneSheetsToWorkbook({
-        title: currentDoc.title,
-        createdAt: currentDoc.createdAt,
-        updatedAt,
-        activeSheetId: activeId ?? currentDoc.activeSheetId,
-        sheets,
-      });
-      return { ...built, sheets: idsRef.current ? idsRef.current.attach(built.sheets) : built.sheets };
-    },
-    [],
-  );
+  /** The workbook as it is right now: the grid's store (with every unsaved edit) under the title the editor holds. */
+  const buildCurrentWorkbook = useCallback(async (currentDoc: SheetDocument, updatedAt = Date.now()): Promise<SheetDocument> => {
+    const store = storeRef.current;
+    if (!store) return { ...currentDoc, updatedAt };
+    const built = await store.toDocument();
+    return { ...built, title: currentDoc.title, createdAt: currentDoc.createdAt, updatedAt };
+  }, []);
 
   const markDirty = useCallback(() => {
     if (!dirtyRef.current) {
@@ -281,13 +181,14 @@ export function Editor() {
       saveTimerRef.current = null;
     }
     updateSaveState("saving");
-    const docToSave: SheetDocument = buildCurrentWorkbook(currentDoc, Date.now());
-    documentRef.current = docToSave;
+    let docToSave: SheetDocument = currentDoc;
     try {
+      docToSave = await buildCurrentWorkbook(currentDoc, Date.now());
+      documentRef.current = docToSave;
       const { event } = await library.saveDocument(currentEntry, docToSave);
       lastEventAtRef.current = event.created_at * 1000;
       lastEventIdRef.current = event.id;
-      setSheetDocument(docToSave);
+      storeRef.current?.markSaved();
       setTitle(docToSave.title);
       setLastSavedAt(Date.now());
       dirtyRef.current = false;
@@ -327,37 +228,47 @@ export function Editor() {
     }, 1400);
   }, [updateSaveState]);
 
-  const handleChange = useCallback(
-    (data: Sheet[]) => {
-      sheetsRef.current = data;
-      if (!loadedRef.current || applyingRemoteRef.current || !entryRef.current?.editKey) return;
-      markDirty();
-      scheduleSave();
+  /** The grid has (or no longer has) unsaved changes. */
+  const handleGridDirty = useCallback(
+    (isDirty: boolean) => {
+      if (!entryRef.current?.editKey || applyingRemoteRef.current) return;
+      if (isDirty) {
+        markDirty();
+        scheduleSave();
+      } else {
+        dirtyRef.current = false;
+        setDirty(false);
+        if (saveStateRef.current === "unsaved") updateSaveState("saved");
+      }
     },
-    [markDirty, scheduleSave],
+    [markDirty, scheduleSave, updateSaveState],
   );
-
-  const handleOp = useCallback((ops: { op: string; id?: string; value?: unknown }[]) => {
-    for (const op of ops) idsRef.current?.apply(op);
-  }, []);
+  const gridHost = useMemo(
+    () => ({
+      onStore: (store: BigSheetStore) => {
+        storeRef.current = store;
+      },
+      onDirtyChange: handleGridDirty,
+      save: () => saveNowRef.current(),
+      saving: saveState === "saving",
+    }),
+    [handleGridDirty, saveState],
+  );
 
   const applyRemote = useCallback(
     (remoteDoc: SheetDocument, event: Event) => {
       const currentEntry = entryRef.current;
       if (!currentEntry) return;
-      const activeId = sheetsRef.current.find((sheet) => sheet.status === 1)?.id;
+      const activeId = storeRef.current?.root.activeSheetId;
       const prepared: SheetDocument =
         activeId && remoteDoc.sheets.some((sheet) => sheet.id === activeId)
           ? { ...remoteDoc, activeSheetId: activeId }
           : remoteDoc;
-      const fortuneSheets = workbookToFortuneSheets(prepared);
-      idsRef.current?.seed(prepared.sheets);
       applyingRemoteRef.current = true;
+      // A new document makes the grid open it afresh.
       setSheetDocument(prepared);
       documentRef.current = prepared;
       setTitle(prepared.title);
-      sheetsRef.current = fortuneSheets;
-      workbookRef.current?.updateSheet(sheetsForUpdate(fortuneSheets));
       lastEventAtRef.current = event.created_at * 1000;
       lastEventIdRef.current = event.id;
       saveDocCache(currentEntry, prepared, {
@@ -390,15 +301,13 @@ export function Editor() {
     setRemoteUpdate(null);
     setSheetDocument(null);
     documentRef.current = null;
-    setInitialSheets([]);
     setTitle("");
-    selectionRef.current = [];
+    storeRef.current = null;
     updateSaveState("idle");
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
 
     const currentEntry = entry;
     library
@@ -406,14 +315,9 @@ export function Editor() {
       .then((result) => {
         if (cancelled) return;
         const doc = result.doc;
-        const fortuneSheets = workbookToFortuneSheets(doc);
-        idsRef.current?.seed(doc.sheets);
         setSheetDocument(doc);
         documentRef.current = doc;
         setTitle(doc.title);
-        setInitialSheets(fortuneSheets);
-        setWorkbookVersion((version) => version + 1);
-        sheetsRef.current = fortuneSheets;
         lastEventAtRef.current = result.event
           ? result.event.created_at * 1000
           : currentEntry.lastEventAt;
@@ -431,10 +335,6 @@ export function Editor() {
               ? "saved"
               : "readonly",
         );
-        loadedRef.current = false;
-        loadTimerRef.current = window.setTimeout(() => {
-          loadedRef.current = true;
-        }, 1000);
         setLoading(false);
         const referenced = collectReferencedPubkeys(doc);
         if (referenced.length > 0) void profiles.ensureProfiles(referenced);
@@ -454,7 +354,6 @@ export function Editor() {
 
     return () => {
       cancelled = true;
-      if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
     };
   }, [
     auth.pubkey,
@@ -484,16 +383,13 @@ export function Editor() {
       remoteCheckRef.current = true;
       void library
         .fetchRemoteDocument(targetEntry)
-        .then((result) => {
+        .then(async (result) => {
           if (!result) return;
           if (result.event.id === lastEventIdRef.current) return;
           if (lastEventAtRef.current && result.event.created_at * 1000 <= lastEventAtRef.current) return;
           const currentDoc = documentRef.current;
-          const currentSheets = currentDoc
-            ? JSON.stringify(buildCurrentWorkbook(currentDoc, currentDoc.updatedAt).sheets)
-            : "";
-          const remoteSheets = JSON.stringify(result.doc.sheets);
-          if (currentSheets === remoteSheets) {
+          const current = currentDoc ? await buildCurrentWorkbook(currentDoc, currentDoc.updatedAt) : null;
+          if (current && sameContent(current, result.doc)) {
             lastEventAtRef.current = result.event.created_at * 1000;
             lastEventIdRef.current = result.event.id;
             return;
@@ -543,15 +439,15 @@ export function Editor() {
       const currentEntry = entryRef.current;
       const currentDoc = documentRef.current;
       if (currentEntry?.editKey && dirtyRef.current && currentDoc) {
-        if (AUTOSAVE_ENABLED) {
-          void library
-            .saveDocument(currentEntry, buildCurrentWorkbook(currentDoc, Date.now()))
-            .catch(() => {});
-        } else {
-          // No network save without the user's say-so: keep a local draft so leaving the page
-          // does not lose the edits (too-big drafts do not fit in local storage and are skipped).
-          saveDocCache(currentEntry, buildCurrentWorkbook(currentDoc, Date.now()), { pending: true });
-        }
+        void buildCurrentWorkbook(currentDoc, Date.now()).then((built) => {
+          if (AUTOSAVE_ENABLED) {
+            void library.saveDocument(currentEntry, built).catch(() => {});
+          } else {
+            // No network save without the user's say-so: keep a local draft so leaving the page
+            // does not lose the edits (too-big drafts do not fit in local storage and are skipped).
+            saveDocCache(currentEntry, built, { pending: true });
+          }
+        });
       }
     };
   }, [buildCurrentWorkbook, library.saveDocument]);
@@ -565,92 +461,6 @@ export function Editor() {
     }
     markDirty();
     scheduleSave();
-  };
-
-  const openMetaDialog = (mode: "person" | "tag") => {
-    if (!entryRef.current?.editKey) {
-      toast("You have view-only access to this sheet.", "info");
-      return;
-    }
-    const ranges = workbookRef.current?.getSelection();
-    if (!ranges || ranges.length === 0) {
-      toast("Select one or more cells first.", "info");
-      return;
-    }
-    selectionRef.current = ranges.map((range) => ({ row: range.row, column: range.column }));
-    if (mode === "person") setPersonOpen(true);
-    else setTagOpen(true);
-  };
-
-  const applyPerson = (user: UserRef) => {
-    const ranges = selectionRef.current;
-    if (ranges.length === 0) return;
-    const label = user.name || shortNpub(user.pubkey);
-    const calls: Parameters<WorkbookInstance["batchCallApis"]>[0] = [];
-    for (const range of ranges) {
-      const startRow = Math.min(range.row[0], range.row[1]);
-      const endRow = Math.max(range.row[0], range.row[1]);
-      const startCol = Math.min(range.column[0], range.column[1]);
-      const endCol = Math.max(range.column[0], range.column[1]);
-      for (let row = startRow; row <= endRow; row++) {
-        for (let column = startCol; column <= endCol; column++) {
-          calls.push({
-            name: "setCellValue",
-            args: [
-              row,
-              column,
-              {
-                v: label,
-                m: label,
-                ct: {
-                  fa: "General",
-                  t: "s",
-                  s: {
-                    fs: "user",
-                    pubkey: user.pubkey,
-                    npub: user.npub,
-                    name: user.name,
-                    picture: user.picture,
-                  },
-                },
-              },
-            ],
-          });
-        }
-      }
-    }
-    workbookRef.current?.batchCallApis(calls);
-    toast("Person tag added.", "success");
-  };
-
-  const applyTag = (tag: string) => {
-    const ranges = selectionRef.current;
-    if (ranges.length === 0) return;
-    const calls: Parameters<WorkbookInstance["batchCallApis"]>[0] = [];
-    for (const range of ranges) {
-      const startRow = Math.min(range.row[0], range.row[1]);
-      const endRow = Math.max(range.row[0], range.row[1]);
-      const startCol = Math.min(range.column[0], range.column[1]);
-      const endCol = Math.max(range.column[0], range.column[1]);
-      for (let row = startRow; row <= endRow; row++) {
-        for (let column = startCol; column <= endCol; column++) {
-          calls.push({
-            name: "setCellValue",
-            args: [
-              row,
-              column,
-              {
-                v: tag,
-                m: tag,
-                ct: { fa: "General", t: "s", s: { fs: "tag" } },
-              },
-            ],
-          });
-        }
-      }
-    }
-    workbookRef.current?.batchCallApis(calls);
-    toast("Tag added.", "success");
   };
 
   const copyLink = async (mode: "view" | "edit") => {
@@ -667,18 +477,18 @@ export function Editor() {
     const currentDoc = documentRef.current;
     if (!currentDoc) return;
     try {
-      await exportSpreadsheet(buildCurrentWorkbook(currentDoc, Date.now()));
+      await exportSpreadsheet(await buildCurrentWorkbook(currentDoc, Date.now()));
       toast("Workbook exported.", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Couldn't export this workbook.", "error");
     }
   };
 
-  const downloadCsv = () => {
+  const downloadCsv = async () => {
     const currentDoc = documentRef.current;
     if (!currentDoc) return;
     try {
-      exportActiveSheetCsv(buildCurrentWorkbook(currentDoc, Date.now()));
+      exportActiveSheetCsv(await buildCurrentWorkbook(currentDoc, Date.now()));
       toast("Current sheet exported.", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Couldn't export this sheet.", "error");
@@ -698,41 +508,6 @@ export function Editor() {
       setDeleting(false);
     }
   };
-
-  const peopleChoices = useMemo<PersonChoice[]>(() => {
-    const map = new Map<string, PersonChoice>();
-    if (entry?.ownerPubkey) {
-      const profile = profiles.profiles.get(entry.ownerPubkey);
-      map.set(entry.ownerPubkey, {
-        pubkey: entry.ownerPubkey,
-        npub: toNpub(entry.ownerPubkey),
-        name: profile?.displayName || profile?.name || entry.ownerName,
-        picture: profile?.picture || entry.ownerPicture,
-        role: "owner",
-      });
-    }
-    for (const person of entry?.sharedWith ?? []) {
-      const profile = profiles.profiles.get(person.pubkey);
-      map.set(person.pubkey, {
-        pubkey: person.pubkey,
-        npub: person.npub,
-        name: profile?.displayName || profile?.name || person.name,
-        picture: profile?.picture || person.picture,
-        role: person.role,
-      });
-    }
-    if (auth.pubkey && !map.has(auth.pubkey)) {
-      const profile = profiles.profiles.get(auth.pubkey);
-      map.set(auth.pubkey, {
-        pubkey: auth.pubkey,
-        npub: auth.npub || toNpub(auth.pubkey),
-        name: profile?.displayName || profile?.name,
-        picture: profile?.picture,
-        role: entry?.role === "owner" ? "owner" : entry?.role === "editor" ? "editor" : "viewer",
-      });
-    }
-    return Array.from(map.values());
-  }, [auth.npub, auth.pubkey, entry, profiles.profiles]);
 
   const collaboratorAvatars = useMemo(() => {
     const map = new Map<string, { pubkey: string; name?: string; picture?: string }>();
@@ -762,35 +537,6 @@ export function Editor() {
     }
     return Array.from(map.values());
   }, [auth.pubkey, entry, profiles.profiles]);
-
-  const hooks = useMemo<Hooks>(
-    () => ({
-      afterRenderCell: (cell, info, ctx) => {
-        drawCellPill(cell, info, ctx, (pubkey) => profiles.profileFor(pubkey));
-      },
-    }),
-    [profiles.profiles, profiles.profileFor],
-  );
-
-  const customToolbarItems = useMemo<NonNullable<Settings["customToolbarItems"]>>(
-    () => [
-      {
-        key: "formstr-person",
-        tooltip: "Tag a person",
-        icon: <UserRound size={16} />,
-        children: <span className="sr-only">Tag a person</span>,
-        onClick: () => openMetaDialog("person"),
-      },
-      {
-        key: "formstr-tag",
-        tooltip: "Add a tag pill",
-        icon: <Tag size={16} />,
-        children: <span className="sr-only">Add a tag pill</span>,
-        onClick: () => openMetaDialog("tag"),
-      },
-    ],
-    [],
-  );
 
   if (!entry && library.loading) {
     return (
@@ -836,7 +582,6 @@ export function Editor() {
 
   const roleLabel =
     entry.role === "owner" ? "Owner" : entry.role === "editor" ? "Editor" : "Viewer";
-  const workbookKey = `${entry.coordinate}:${workbookVersion}`;
 
   return (
     <div className="editor-page">
@@ -958,7 +703,7 @@ export function Editor() {
                   label="Download current sheet (.csv)"
                   onClick={() => {
                     close();
-                    downloadCsv();
+                    void downloadCsv();
                   }}
                 />
                 <MenuSeparator />
@@ -988,7 +733,7 @@ export function Editor() {
                     close();
                     const currentDoc = documentRef.current;
                     // Measure what is open right now, including unsaved edits.
-                    if (currentDoc) setInfoDoc(buildCurrentWorkbook(currentDoc, Date.now()));
+                    if (currentDoc) void buildCurrentWorkbook(currentDoc, Date.now()).then(setInfoDoc);
                   }}
                 />
                 <MenuItem
@@ -1089,33 +834,7 @@ export function Editor() {
           <p>Decrypting your sheet…</p>
         </div>
       ) : (
-        <div className="editor-workbook">
-          <Workbook
-            key={workbookKey}
-            ref={workbookRef}
-            data={initialSheets}
-            row={200}
-            column={26}
-            rowHeaderWidth={46}
-            columnHeaderHeight={28}
-            defaultColWidth={116}
-            defaultRowHeight={30}
-            defaultFontSize={11}
-            lang="en"
-            currency="$"
-            allowEdit={canEdit}
-            showToolbar
-            showFormulaBar
-            showSheetTabs
-            toolbarItems={TOOLBAR_ITEMS}
-            cellContextMenu={CELL_CONTEXT_MENU}
-            sheetTabContextMenu={SHEET_TAB_CONTEXT_MENU}
-            hooks={hooks}
-            customToolbarItems={customToolbarItems}
-            onChange={handleChange}
-            onOp={handleOp}
-          />
-        </div>
+        <BigSheetView entry={entry} document={sheetDocument} host={gridHost} />
       )}
 
       <footer className="editor-statusbar">
@@ -1139,22 +858,6 @@ export function Editor() {
       </footer>
 
       <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} entry={entry} />
-      <PersonDialog
-        open={personOpen}
-        onClose={() => {
-          setPersonOpen(false);
-              }}
-        onPick={applyPerson}
-        people={peopleChoices}
-      />
-      <TagDialog
-        open={tagOpen}
-        onClose={() => {
-          setTagOpen(false);
-              }}
-        onPick={applyTag}
-      />
-
       <Dialog
         open={deleteOpen}
         onClose={() => (deleting ? undefined : setDeleteOpen(false))}

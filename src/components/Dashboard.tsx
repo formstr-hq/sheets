@@ -534,8 +534,12 @@ export function Dashboard() {
                       <span className={`role-chip role-${entry.role}`}>
                         {entry.role === "owner" ? "Owner" : entry.role === "editor" ? "Editor" : "Viewer"}
                       </span>
+                      {entry.storedBytes ? (
+                        <span className="sheet-card-size" title="Encrypted size in storage">
+                          {formatBytes(entry.storedBytes)}
+                        </span>
+                      ) : null}
                       <span className="sheet-card-stats">
-                        {entry.storedBytes ? <span title="Encrypted size in storage">{formatBytes(entry.storedBytes)}</span> : null}
                         <span>{formatRelativeTime(entry.lastOpenedAt ?? entry.updatedAt)}</span>
                       </span>
                       {entry.role !== "owner" && ownerProfile?.picture && (

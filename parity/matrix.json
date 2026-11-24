@@ -58,10 +58,10 @@
       "dependents update (any size)": "done",
       "cross-tab references": "done",
       "references follow inserted/deleted rows and columns": "done",
-      "450 FortuneSheet functions": "partial",
-      "formula bar with token colours": "partial",
+      "450 FortuneSheet functions": "done",
+      "formula bar with token colours": "done",
       "autocomplete and argument help": "done",
-      "click/drag to insert references": "partial",
+      "click/drag to insert references": "done",
       "recalculate formulas from the file on open": "partial",
       "volatile functions (NOW, RAND...)": "done",
       "manual calculation mode": "done"
@@ -72,7 +72,7 @@
       "hyperlinks": "done",
       "comments": "done",
       "filter by value / colour": "done",
-      "images": "todo"
+      "images": "done"
     },
     "Persistence and platform": {
       "open huge sheets (100 MB / 25M cells)": "done",
@@ -82,7 +82,7 @@
       "xlsx export (streaming)": "done",
       "live collaboration": "todo",
       "automated parity test against FortuneSheet": "partial",
-      "FortuneSheet removed": "todo",
+      "FortuneSheet removed": "done",
       "packages published": "todo"
     }
   }

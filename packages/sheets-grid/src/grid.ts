@@ -127,6 +127,12 @@ export interface GridOptions {
    * cell's address): the grid then leaves the selection and focus alone.
    */
   onReference?(cell: Cell): boolean;
+  /** The pointer that picked a reference (see onReference) moved to another cell: the reference is now the range from `from` to `to`. */
+  onReferenceDrag?(from: Cell, to: Cell): void;
+  /** The pictures floating over the sheet. */
+  images?(): readonly GridImage[];
+  /** A picture was moved or resized (the new place), or deleted with Delete/Backspace (null). */
+  onImageChange?(id: string, change: Omit<GridImage, "id" | "src"> | null): void;
   /** Ctrl+wheel or Ctrl +/-/0 changed the zoom (1 = 100%). */
   onZoom?(zoom: number): void;
   /** Right-click: where (page coordinates) and on which row/column or header. The selection has already been adjusted. */
@@ -149,6 +155,18 @@ interface Band {
   pos: number[];
   start: number;
   stop: number;
+}
+
+/** A picture floating over the cells. It sits at (dx, dy) from the top-left corner of cell (row, col), in unzoomed pixels. */
+export interface GridImage {
+  id: string;
+  src: string;
+  row: number;
+  col: number;
+  dx: number;
+  dy: number;
+  width: number;
+  height: number;
 }
 
 export class Grid {
@@ -180,7 +198,11 @@ export class Grid {
   private observer?: ResizeObserver;
   /** While the fill handle is dragged: the range it would fill. */
   private fillPreview: Range | null = null;
-  private drag: { kind: "cells" | "row" | "col"; from: number } | { kind: "fill"; source: Range } | { kind: "move"; source: Range; grab: Cell } | { kind: "resize"; axis: "row" | "col"; index: number; start: number; size: number } | null = null;
+  private drag: { kind: "cells" | "row" | "col"; from: number } | { kind: "fill"; source: Range } | { kind: "move"; source: Range; grab: Cell } | { kind: "resize"; axis: "row" | "col"; index: number; start: number; size: number } | { kind: "reference"; from: Cell } | { kind: "image"; id: string; mode: "move" | "resize"; startX: number; startY: number; rect: { x: number; y: number; width: number; height: number } } | null = null;
+  private selectedImage: string | null = null;
+  /** Where a picture is while it is being dragged (screen position relative to the grid, unzoomed). */
+  private imagePreview: { id: string; x: number; y: number; width: number; height: number } | null = null;
+  private imageCache = new Map<string, HTMLImageElement>();
 
   constructor(parent: HTMLElement, options: GridOptions) {
     this.options = options;
@@ -503,7 +525,63 @@ export class Grid {
     if (v.fr > 0) ctx.fillRect(this.headW, this.headH + v.fh - 1, v.viewW, 2);
     if (v.fc > 0) ctx.fillRect(this.headW + v.fw - 1, this.headH, 2, v.viewH);
 
+    this.drawImages(v);
     this.drawHeaders(rowBands, colBands);
+  }
+
+  /** The place of a picture on screen (relative to the grid, unzoomed). */
+  private imageRect(image: GridImage): { x: number; y: number; width: number; height: number } {
+    if (this.imagePreview?.id === image.id) return this.imagePreview;
+    const box = this.cellRect({ row: image.row, col: image.col });
+    return { x: box.x / this.zoom + image.dx, y: box.y / this.zoom + image.dy, width: image.width, height: image.height };
+  }
+
+  private drawImages(v: ReturnType<Grid["view"]>): void {
+    const list = this.options.images?.() ?? [];
+    if (list.length === 0) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.headW, this.headH, v.viewW, v.viewH);
+    ctx.clip();
+    for (const image of list) {
+      const rect = this.imageRect(image);
+      let element = this.imageCache.get(image.src);
+      if (!element) {
+        element = new Image();
+        element.onload = () => this.schedule();
+        element.src = image.src;
+        this.imageCache.set(image.src, element);
+      }
+      if (element.complete && element.naturalWidth > 0) ctx.drawImage(element, rect.x, rect.y, rect.width, rect.height);
+      else {
+        ctx.fillStyle = "#f1f3f5";
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      }
+      if (this.selectedImage === image.id) {
+        ctx.strokeStyle = "#0188fb";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+        ctx.fillStyle = "#0188fb";
+        ctx.fillRect(rect.x + rect.width - 5, rect.y + rect.height - 5, 10, 10);
+      }
+    }
+    ctx.restore();
+  }
+
+  /** The picture under a point (top one first), and whether the point is on its resize corner. */
+  private imageAt(px: number, py: number): { image: GridImage; resize: boolean; rect: { x: number; y: number; width: number; height: number } } | null {
+    const list = this.options.images?.() ?? [];
+    if (px < this.headW || py < this.headH) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const rect = this.imageRect(list[i]);
+      if (px >= rect.x - 5 && px <= rect.x + rect.width + 5 && py >= rect.y - 5 && py <= rect.y + rect.height + 5) {
+        const resize = this.selectedImage === list[i].id && Math.abs(px - (rect.x + rect.width)) <= 8 && Math.abs(py - (rect.y + rect.height)) <= 8;
+        if (px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height) return { image: list[i], resize, rect };
+        if (resize) return { image: list[i], resize, rect };
+      }
+    }
+    return null;
   }
 
   /** Cells and grid lines of one block. */
@@ -979,6 +1057,21 @@ export class Grid {
     const hit = this.hit(event.clientX, event.clientY);
     // The scrollbars sit inside the scroller; ignore presses on them.
     if (hit.px >= this.width || hit.py >= this.height) return;
+    const onImage = this.imageAt(hit.px, hit.py);
+    if (onImage) {
+      this.focus();
+      this.selectedImage = onImage.image.id;
+      this.drag = { kind: "image", id: onImage.image.id, mode: onImage.resize ? "resize" : "move", startX: hit.px, startY: hit.py, rect: onImage.rect };
+      this.imagePreview = { id: onImage.image.id, ...onImage.rect };
+      this.scroller.setPointerCapture(event.pointerId);
+      this.schedule();
+      event.preventDefault();
+      return;
+    }
+    if (this.selectedImage) {
+      this.selectedImage = null;
+      this.schedule();
+    }
     if (!hit.onRowHead && !hit.onColHead && this.options.onToggle) {
       const here = this.data.cell(hit.row, hit.col);
       if (here?.checkbox !== undefined) {
@@ -1008,6 +1101,8 @@ export class Grid {
       return;
     }
     if (!hit.onRowHead && !hit.onColHead && this.options.onReference?.({ row: hit.row, col: hit.col })) {
+      this.drag = { kind: "reference", from: { row: hit.row, col: hit.col } };
+      this.scroller.setPointerCapture(event.pointerId);
       event.preventDefault();
       return;
     }
@@ -1043,6 +1138,20 @@ export class Grid {
       return;
     }
     const bounds = { rows: this.rows, cols: this.cols };
+    if (drag.kind === "image") {
+      const dx = hit.px - drag.startX;
+      const dy = hit.py - drag.startY;
+      this.imagePreview =
+        drag.mode === "move"
+          ? { id: drag.id, ...drag.rect, x: drag.rect.x + dx, y: drag.rect.y + dy }
+          : { id: drag.id, ...drag.rect, width: Math.max(20, drag.rect.width + dx), height: Math.max(20, drag.rect.height + dy) };
+      this.schedule();
+      return;
+    }
+    if (drag.kind === "reference") {
+      this.options.onReferenceDrag?.(drag.from, { row: hit.row, col: hit.col });
+      return;
+    }
     if (drag.kind === "move") {
       const dr = Math.max(-drag.source.r1, Math.min(this.rows.length - 1 - drag.source.r2, hit.row - drag.grab.row));
       const dc = Math.max(-drag.source.c1, Math.min(this.cols.length - 1 - drag.source.c2, hit.col - drag.grab.col));
@@ -1080,6 +1189,18 @@ export class Grid {
     const drag = this.drag;
     this.drag = null;
     if (this.scroller.hasPointerCapture(event.pointerId)) this.scroller.releasePointerCapture(event.pointerId);
+    if (drag?.kind === "image") {
+      const preview = this.imagePreview;
+      this.imagePreview = null;
+      this.schedule();
+      if (preview) {
+        // Anchor the picture to the cell under its top-left corner.
+        const at = this.hit(this.root.getBoundingClientRect().left + Math.max(this.headW, preview.x) * this.zoom + 1, this.root.getBoundingClientRect().top + Math.max(this.headH, preview.y) * this.zoom + 1);
+        const box = this.cellRect({ row: at.row, col: at.col });
+        this.options.onImageChange?.(drag.id, { row: at.row, col: at.col, dx: Math.round(preview.x - box.x / this.zoom), dy: Math.round(preview.y - box.y / this.zoom), width: Math.round(preview.width), height: Math.round(preview.height) });
+      }
+      return;
+    }
     if (drag?.kind === "move") {
       const preview = this.fillPreview;
       this.fillPreview = null;
@@ -1144,6 +1265,14 @@ export class Grid {
   // --- keyboard ---------------------------------------------------------------------------
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (this.selectedImage && (event.key === "Delete" || event.key === "Backspace" || event.key === "Escape")) {
+      event.preventDefault();
+      const id = this.selectedImage;
+      this.selectedImage = null;
+      if (event.key !== "Escape") this.options.onImageChange?.(id, null);
+      this.schedule();
+      return;
+    }
     const sel = this.selection;
     const mod = event.ctrlKey || event.metaKey;
     const bounds = { rows: this.rows, cols: this.cols };

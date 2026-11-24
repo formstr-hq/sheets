@@ -475,7 +475,7 @@ export async function refreshDependents(
 }
 
 /** Functions whose result changes every time (Excel recalculates them whenever a workbook is opened). */
-const VOLATILE = /\b(?:NOW|TODAY|RAND|RANDBETWEEN|RANDARRAY)\s*\(/i;
+const VOLATILE = /\b(?:NOW|TODAY|RAND|RANDBETWEEN|RANDARRAY|INDIRECT|OFFSET)\s*\(/i;
 export const isVolatile = (formula: string): boolean => VOLATILE.test(formula);
 
 /**

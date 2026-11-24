@@ -263,6 +263,16 @@ export function storedBytesOf(root: SheetRootV2): number {
   return bytes;
 }
 
+/** Bytes a sheet takes in storage, read from its event alone (nothing is downloaded); null when the event cannot be read. */
+export function storedBytesOfEvent(event: Pick<Event, "content">, viewKey: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(decryptWithSecret(event.content, viewKey));
+    return isSheetRootV2(parsed) ? storedBytesOf(parsed) : event.content.length;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Builds the sheet event as a v2 root. A sheet whose compressed root fits in 32 KB
  * stays inline in the event; a larger one has its tabs encrypted and uploaded to
