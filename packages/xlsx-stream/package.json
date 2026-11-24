@@ -1,0 +1,39 @@
+{
+  "name": "@formstr/xlsx-stream",
+  "version": "0.0.0",
+  "description": "Streaming .xlsx reader for the browser: reads a File piece by piece in a Web Worker.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./worker": "./dist/worker.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist dist-spike",
+    "spike": "vite --config spike/vite.config.ts",
+    "spike:build": "vite build --config spike/vite.config.ts"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "devDependencies": {
+    "events": "3.3.0",
+    "exceljs": "4.4.0",
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^5.0.5"
+  }
+}

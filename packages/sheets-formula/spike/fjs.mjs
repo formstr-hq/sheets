@@ -1,0 +1,18 @@
+import * as fjs from "@formulajs/formulajs";
+const show = (label, fn) => { try { const v = fn(); console.log(label.padEnd(34), v instanceof Error ? `Error(${v.message})` : v instanceof Date ? `Date(${v.toISOString()})` : JSON.stringify(v)); } catch (e) { console.log(label.padEnd(34), "THROWS", e.message); } };
+show("SUM(1,2,[3,4])", () => fjs.SUM(1, 2, [3, 4]));
+show("SUM([[1,2],[3,4]])", () => fjs.SUM([[1, 2], [3, 4]]));
+show("IF(true,1,2)", () => fjs.IF(true, 1, 2));
+show("1/0 via DIVIDE", () => fjs.DIVIDE(1, 0));
+show("IFERROR(DIVIDE(1,0),5)", () => fjs.IFERROR(fjs.DIVIDE(1, 0), 5));
+show("COUNTIF([[1],[2],[2]],2)", () => fjs.COUNTIF([[1], [2], [2]], 2));
+show("COUNTIF(range,'>1')", () => fjs.COUNTIF([[1], [2], [2]], ">1"));
+show("COUNTA([[1],[null],['x']])", () => fjs.COUNTA([[1], [null], ["x"]]));
+show("DATE(2020,1,1)", () => fjs.DATE(2020, 1, 1));
+show("VLOOKUP", () => fjs.VLOOKUP(2, [[1, "a"], [2, "b"]], 2, false));
+show("PMT(0.05/12,60,10000)", () => fjs.PMT(0.05 / 12, 60, 10000));
+show("TEXT(1234.5,'#,##0.00')", () => fjs.TEXT(1234.5, "#,##0.00"));
+show("NORM.DIST", () => fjs.NORM && fjs.NORM.DIST ? fjs.NORM.DIST(1, 0, 1, true) : "n/a");
+show("typeof EDATE", () => typeof fjs.EDATE);
+console.log("function count:", Object.keys(fjs).filter((k) => typeof fjs[k] === "function").length);
+console.log("sample dotted keys:", Object.keys(fjs).filter((k) => typeof fjs[k] === "object").slice(0, 8));

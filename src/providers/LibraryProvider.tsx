@@ -12,6 +12,7 @@ import { nip19, type Event } from "nostr-tools";
 import type { Sheet } from "@fortune-sheet/core";
 import {
   CLIENT_TAG,
+  KIND_BLOSSOM_SERVERS,
   KIND_SHEET,
   KIND_SHEET_GRANT,
   KIND_SHEET_META,
@@ -20,11 +21,16 @@ import {
 import {
   buildSheetDeletionEvent,
   buildSheetEvent,
-  decryptWithSecret,
+  decodeSheetEvent,
   generateDocKeys,
+  sheetEventFromRoot,
+  storedBytesOf,
+  type TabMemory,
 } from "../lib/crypto";
+import { importXlsxToBlossom } from "../lib/v2/streamImport";
 import {
   coordinateFor,
+  fetchBlossomServers,
   fetchEvents,
   fetchLatestEvent,
   fetchUserRelays,
@@ -32,15 +38,18 @@ import {
   publishEvent,
   subscribeSheet,
 } from "../lib/nostr";
-import {
-  createWorkbookFromFortune,
-  normalizeWorkbook,
-} from "../lib/workbook";
+import { createWorkbookFromFortune } from "../lib/workbook";
+import { BlobUnavailableError, SheetTooLargeError, SheetTooLargeToOpenError, type SheetRootV2 } from "../lib/v2/root";
+import { mergeServers } from "../lib/v2/blossom";
+import { uploadProgress } from "../lib/v2/progress";
 import { templateById } from "../lib/templates";
 import {
   loadDocCache,
   loadHiddenCoordinates,
   loadLibraryCache,
+  loadUploadPrefs,
+  saveUploadPrefs as persistUploadPrefs,
+  type UploadPrefs,
   saveDocCache,
   saveHiddenCoordinates,
   saveLibraryCache,
@@ -66,6 +75,8 @@ interface LibraryContextValue {
   refresh: () => Promise<void>;
   createSheet: (templateId: string, title: string) => Promise<LibraryEntry>;
   importDocument: (title: string, sheets: Sheet[]) => Promise<LibraryEntry>;
+  /** Big xlsx: read in a worker, encrypted and uploaded chunk by chunk, never held in memory whole. */
+  importStreamed: (title: string, file: File, signal?: AbortSignal) => Promise<{ entry: LibraryEntry; dropped: string[] }>;
   getEntry: (idOrCoordinate: string) => LibraryEntry | undefined;
   getEntryByNaddr: (naddr: string) => LibraryEntry | undefined;
   parseShareLink: (naddr: string, hash: string) => LibraryEntry | null;
@@ -86,6 +97,21 @@ interface LibraryContextValue {
   revokeAccess: (entry: LibraryEntry, pubkey: string) => Promise<void>;
   subscribeToEntry: (entry: LibraryEntry, onEvent: (event: Event) => void) => () => void;
   buildShareLink: (entry: LibraryEntry, mode: "view" | "edit") => string;
+  /** The user's Blossom servers (their kind 10063 list), where large sheets are stored. */
+  blossomServers: string[];
+  refreshBlossomServers: () => Promise<string[]>;
+  /**
+   * Publishes the list. `removed` are servers the user took out; everything else already on
+   * their profile is kept, so a stale or failed read cannot wipe servers added elsewhere.
+   */
+  saveBlossomServers: (servers: string[], removed: string[]) => Promise<string[]>;
+  /** Which servers uploads go to, and whether to keep a second copy. Stored on this device. */
+  uploadPrefs: UploadPrefs;
+  saveUploadPrefs: (prefs: UploadPrefs) => void;
+  /** Where a big sheet's edited chunks are uploaded, and who signs. */
+  bigSheetUpload: () => { servers: string[]; replicas: number; signer?: ActiveSigner };
+  /** Signs a big sheet's updated root with its edit key and publishes it. */
+  publishBigRoot: (entry: LibraryEntry, root: SheetRootV2) => Promise<void>;
 }
 
 const LibraryContext = createContext<LibraryContextValue | undefined>(undefined);
@@ -301,6 +327,118 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const lastMetaAtRef = useRef(new Map<string, number>());
 
+  // Blossom: the user's server list (kind 10063), warmed after sign-in, and a per-sheet
+  // memory of blobs already uploaded so a save only sends the tabs that changed.
+  const serversRef = useRef<string[]>([]);
+  const [blossomServers, setBlossomServers] = useState<string[]>([]);
+  const reuseRef = useRef(new Map<string, Map<string, TabMemory>>());
+
+  const [uploadPrefs, setUploadPrefsState] = useState<UploadPrefs>({ off: [] });
+  const prefsRef = useRef(uploadPrefs);
+  useEffect(() => {
+    const prefs = pubkey ? loadUploadPrefs(pubkey) : { off: [] };
+    prefsRef.current = prefs;
+    setUploadPrefsState(prefs);
+  }, [pubkey]);
+
+  const saveUploadPrefs = useCallback(
+    (prefs: UploadPrefs) => {
+      prefsRef.current = prefs;
+      setUploadPrefsState(prefs);
+      if (pubkey) persistUploadPrefs(pubkey, prefs);
+    },
+    [pubkey],
+  );
+
+  const reuseFor = useCallback((coordinate: string) => {
+    let map = reuseRef.current.get(coordinate);
+    if (!map) {
+      map = new Map();
+      reuseRef.current.set(coordinate, map);
+    }
+    return map;
+  }, []);
+
+  const fetchServers = useCallback(async () => {
+    if (!pubkey) return [];
+    const list = await fetchBlossomServers(relays, pubkey).catch(() => []);
+    serversRef.current = list;
+    setBlossomServers(list);
+    return list;
+  }, [pubkey, relays]);
+
+  useEffect(() => {
+    serversRef.current = [];
+    setBlossomServers([]);
+    void fetchServers();
+  }, [fetchServers]);
+
+  const saveBlossomServers = useCallback(
+    async (servers: string[], removed: string[]) => {
+      if (!signer || !pubkey) throw new Error("Please sign in first.");
+      // Read the current list again so servers added elsewhere (e.g. in Formstr Drive) survive.
+      const merged = mergeServers(await fetchServers(), servers, removed);
+      const event = await signer.signEvent({
+        kind: KIND_BLOSSOM_SERVERS,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: merged.map((url) => ["server", url]),
+        content: "",
+      });
+      await publishEvent(event, relays);
+      serversRef.current = merged;
+      setBlossomServers(merged);
+      return merged;
+    },
+    [fetchServers, pubkey, relays, signer],
+  );
+
+  // Builds the sheet event. If the sheet is too big to store inline and we have not seen any
+  // Blossom servers, look the list up again once (it may have been added since sign-in).
+  // Remembers a sheet's stored size on its library entry (shown on the dashboard card).
+  const sizesRef = useRef(new Map<string, number>());
+  const noteSize = useCallback(
+    (coordinate: string, bytes: number) => {
+      sizesRef.current.set(coordinate, bytes);
+      const current = entriesRef.current.find((item) => item.coordinate === coordinate);
+      if (!current || current.storedBytes === bytes) return;
+      replaceEntries(
+        entriesRef.current.map((item) => (item.coordinate === coordinate ? { ...item, storedBytes: bytes } : item)),
+      );
+    },
+    [replaceEntries],
+  );
+
+  const buildEvent = useCallback(
+    async (coordinate: string, params: Omit<Parameters<typeof buildSheetEvent>[0], "blossom">) => {
+      const attempt = (servers: string[]) => {
+        // Unticked servers are never uploaded to (they are still used to read sheets).
+        const { off } = prefsRef.current;
+        const targets = servers.filter((url) => !off.includes(url));
+        return buildSheetEvent({
+          ...params,
+          onSize: (bytes) => noteSize(coordinate, bytes),
+          blossom: {
+            servers: targets,
+            // Every ticked server gets every blob.
+            replicas: targets.length,
+            signer: signer ?? undefined,
+            reuse: reuseFor(coordinate),
+            onProgress: uploadProgress.report,
+          },
+        });
+      };
+      try {
+        return await attempt(serversRef.current);
+      } catch (error) {
+        if (!(error instanceof SheetTooLargeError)) throw error;
+        const servers = await fetchServers();
+        if (servers.length === 0) throw error;
+        return attempt(servers);
+      }
+    },
+    [fetchServers, noteSize, reuseFor, signer],
+  );
+
   const persistEntry = useCallback(
     async (entry: LibraryEntry, deleted = false) => {
       if (!signer || !pubkey || entry.source === "grant") return;
@@ -448,7 +586,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         createdAt: now,
         updatedAt: now,
       };
-      const event = buildSheetEvent({
+      const event = await buildEvent(coordinateFor(keys.editPubkey, id), {
         sheetId: id,
         document: finalDocument,
         viewKey: keys.viewKey,
@@ -476,6 +614,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         lastEventAt: event.created_at * 1000,
         lastEventId: event.id,
         source: "owned",
+        storedBytes: sizesRef.current.get(coordinateFor(keys.editPubkey, id)),
       };
 
       saveDocCache(entry, finalDocument, {
@@ -493,7 +632,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       });
       return entry;
     },
-    [persistEntry, profileFor, pubkey, relays, replaceEntries, signer],
+    [buildEvent, persistEntry, profileFor, pubkey, relays, replaceEntries, signer],
   );
 
   const createSheet = useCallback(
@@ -511,6 +650,87 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       return createFromDocument(title, document, "import", "#FF5A36");
     },
     [createFromDocument],
+  );
+
+  const importStreamed = useCallback(
+    async (title: string, file: File, signal?: AbortSignal): Promise<{ entry: LibraryEntry; dropped: string[] }> => {
+      if (!signer || !pubkey) throw new Error("Please sign in first.");
+      const servers = serversRef.current.length > 0 ? serversRef.current : await fetchServers();
+      // Unticked servers are never uploaded to; every ticked one gets every blob.
+      const targets = servers.filter((url) => !prefsRef.current.off.includes(url));
+      const { root, summary } = await importXlsxToBlossom(file, {
+        title,
+        servers: targets,
+        replicas: targets.length,
+        signer,
+        onProgress: uploadProgress.report,
+        signal,
+      });
+      const keys = generateDocKeys();
+      const id = randomId(12);
+      const coordinate = coordinateFor(keys.editPubkey, id);
+      const event = sheetEventFromRoot({ sheetId: id, viewKey: keys.viewKey, editKey: keys.editKey }, root);
+      // No local copy of a streamed sheet exists (it would not fit), so the event must reach a relay.
+      await publishEvent(event, relays);
+      const ownerProfile = profileFor(pubkey);
+      const entry: LibraryEntry = {
+        id,
+        coordinate,
+        editPubkey: keys.editPubkey,
+        viewKey: keys.viewKey,
+        editKey: keys.editKey,
+        title,
+        role: "owner",
+        ownerPubkey: pubkey,
+        ownerName: ownerProfile?.displayName || ownerProfile?.name,
+        ownerPicture: ownerProfile?.picture,
+        createdAt: root.createdAt,
+        updatedAt: root.updatedAt,
+        sharedWith: [],
+        template: "import",
+        color: "#FF5A36",
+        relayHints: relays.slice(0, 3),
+        lastEventAt: event.created_at * 1000,
+        lastEventId: event.id,
+        source: "owned",
+        storedBytes: storedBytesOf(root),
+      };
+      replaceEntries([entry, ...entriesRef.current.filter((item) => item.coordinate !== coordinate)]);
+      void persistEntry(entry).catch(() => {
+        setError("The sheet is stored, but its library metadata didn't reach a relay.");
+      });
+      return { entry, dropped: summary.dropped };
+    },
+    [fetchServers, persistEntry, profileFor, pubkey, relays, replaceEntries, signer],
+  );
+
+  const bigSheetUpload = useCallback(() => {
+    const targets = serversRef.current.filter((url) => !prefsRef.current.off.includes(url));
+    return { servers: targets, replicas: targets.length, signer: signer ?? undefined };
+  }, [signer]);
+
+  const publishBigRoot = useCallback(
+    async (entry: LibraryEntry, root: SheetRootV2) => {
+      if (!entry.editKey) throw new Error("You can only view this sheet.");
+      const previous = entry.lastEventAt ? Math.floor(entry.lastEventAt / 1000) : 0;
+      const createdAt = Math.max(Math.floor(Date.now() / 1000), previous + 1);
+      const event = sheetEventFromRoot({ sheetId: entry.id, viewKey: entry.viewKey, editKey: entry.editKey, createdAt }, root);
+      await publishEvent(event, relays);
+      replaceEntries(
+        entriesRef.current.map((item) =>
+          item.coordinate === entry.coordinate
+            ? {
+                ...item,
+                updatedAt: root.updatedAt,
+                lastEventAt: event.created_at * 1000,
+                lastEventId: event.id,
+                storedBytes: storedBytesOf(root),
+              }
+            : item,
+        ),
+      );
+    },
+    [relays, replaceEntries],
   );
 
   const getEntry = useCallback(
@@ -616,11 +836,16 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         }
         let remoteDocument: SheetDocument;
         try {
-          remoteDocument = normalizeWorkbook(
-            JSON.parse(decryptWithSecret(event.content, entry.viewKey)),
+          remoteDocument = await decodeSheetEvent(
+            event,
+            entry.viewKey,
             entry.title,
+            { servers: serversRef.current, reuse: reuseFor(entry.coordinate) },
+            true,
+            (bytes) => noteSize(entry.coordinate, bytes),
           );
-        } catch {
+        } catch (error) {
+          if (error instanceof BlobUnavailableError || error instanceof SheetTooLargeToOpenError) throw error;
           throw new Error("Couldn't decrypt this sheet. The access keys may have changed.");
         }
         if (entry.title !== remoteDocument.title) {
@@ -658,7 +883,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       }
       throw new Error("This sheet has no saved data yet.");
     },
-    [relays, replaceEntries],
+    [relays, replaceEntries, reuseFor],
   );
 
   const fetchRemoteDocument = useCallback(
@@ -670,16 +895,21 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       );
       if (!event) return null;
       try {
-        const doc = normalizeWorkbook(
-          JSON.parse(decryptWithSecret(event.content, entry.viewKey)),
+        const doc = await decodeSheetEvent(
+          event,
+          entry.viewKey,
           entry.title,
+          { servers: serversRef.current, reuse: reuseFor(entry.coordinate) },
+          true,
+          (bytes) => noteSize(entry.coordinate, bytes),
         );
         return { doc, event };
-      } catch {
+      } catch (error) {
+        if (error instanceof BlobUnavailableError || error instanceof SheetTooLargeToOpenError) throw error;
         throw new Error("Couldn't decrypt the latest version. The access keys may have changed.");
       }
     },
-    [relays],
+    [relays, reuseFor],
   );
 
   const saveDocument = useCallback(
@@ -691,13 +921,26 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         Math.floor(now / 1000),
         Math.floor((entry.lastEventAt ?? 0) / 1000) + 1,
       );
-      const event = buildSheetEvent({
-        sheetId: entry.id,
-        document: nextDocument,
-        viewKey: entry.viewKey,
-        editKey: entry.editKey,
-        createdAt,
-      });
+      // Keep the device copy first: building the event may upload to Blossom, and if that
+      // fails the edits must survive a reload and be retried, like a failed relay publish.
+      saveDocCache(entry, nextDocument, { savedAt: now, pending: true });
+      let event: Event;
+      try {
+        event = await buildEvent(entry.coordinate, {
+          sheetId: entry.id,
+          document: nextDocument,
+          viewKey: entry.viewKey,
+          editKey: entry.editKey,
+          createdAt,
+        });
+      } catch (err) {
+        replaceEntries(
+          entriesRef.current.map((item) =>
+            item.coordinate === entry.coordinate ? { ...item, title: nextDocument.title, updatedAt: now } : item,
+          ),
+        );
+        throw err;
+      }
 
       try {
         const result = await publishEvent(event, relays);
@@ -736,7 +979,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         throw err;
       }
     },
-    [relays, replaceEntries],
+    [buildEvent, relays, replaceEntries],
   );
 
   const updateTitle = useCallback(
@@ -943,6 +1186,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       refresh,
       createSheet,
       importDocument,
+      importStreamed,
+      bigSheetUpload,
+      publishBigRoot,
       getEntry,
       getEntryByNaddr,
       parseShareLink,
@@ -956,6 +1202,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       revokeAccess,
       subscribeToEntry,
       buildShareLink,
+      blossomServers,
+      refreshBlossomServers: fetchServers,
+      saveBlossomServers,
+      uploadPrefs,
+      saveUploadPrefs,
     }),
     [
       entries,
@@ -964,6 +1215,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       refresh,
       createSheet,
       importDocument,
+      importStreamed,
+      bigSheetUpload,
+      publishBigRoot,
       getEntry,
       getEntryByNaddr,
       parseShareLink,
@@ -977,6 +1231,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       revokeAccess,
       subscribeToEntry,
       buildShareLink,
+      blossomServers,
+      fetchServers,
+      saveBlossomServers,
+      uploadPrefs,
+      saveUploadPrefs,
     ],
   );
 

@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "./providers/AuthProvider";
 import { ProfileProvider } from "./providers/ProfileProvider";
 import { LibraryProvider } from "./providers/LibraryProvider";
 import { ToastProvider } from "./providers/ToastProvider";
+import { UploadProgressCard } from "./components/UploadProgressCard";
 
 function Splash() {
   return (
@@ -73,6 +74,7 @@ export default function App() {
           <ProfileProvider>
             <LibraryProvider>
               <AppRoutes />
+              <UploadProgressCard />
             </LibraryProvider>
           </ProfileProvider>
         </AuthProvider>

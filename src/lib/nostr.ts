@@ -1,6 +1,6 @@
 import { dataLayer, type ObserveHandle } from "@formstr/local-relay";
 import type { Event, Filter } from "nostr-tools";
-import { KIND_SHEET } from "./constants";
+import { KIND_BLOSSOM_SERVERS, KIND_SHEET } from "./constants";
 import { mergeRelays } from "./utils";
 
 export type { Event, Filter } from "nostr-tools";
@@ -138,6 +138,17 @@ export function subscribeSheet(
     { relays },
   );
   return () => handle.unobserve();
+}
+
+/** The user's Blossom servers (BUD-03 kind 10063). Empty when they have not set any. */
+export async function fetchBlossomServers(relays: string[], pubkey: string): Promise<string[]> {
+  const event = await fetchLatestEvent(
+    relays,
+    { kinds: [KIND_BLOSSOM_SERVERS], authors: [pubkey], limit: 1 },
+    4500,
+  );
+  if (!event) return [];
+  return event.tags.filter((tag) => tag[0] === "server" && !!tag[1]).map((tag) => tag[1]);
 }
 
 export async function fetchUserRelays(

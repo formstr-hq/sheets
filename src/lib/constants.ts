@@ -6,6 +6,8 @@ export const KIND_SHEET = 33460;
 export const KIND_SHEET_GRANT = 33461;
 export const KIND_SHEET_META = 33462;
 export const KIND_SHEET_INDEX = KIND_SHEET_META;
+/** BUD-03: a user's list of Blossom servers, as `server` tags. */
+export const KIND_BLOSSOM_SERVERS = 10063;
 
 export const DEFAULT_RELAYS = [
   "wss://relay.formstr.app",
@@ -15,10 +17,20 @@ export const DEFAULT_RELAYS = [
   "wss://relay.nostr.band",
 ];
 
+/**
+ * Automatic saving is off for now: every save of a big sheet can ask the signer for approval, so
+ * saves happen only when the user presses Save (or Ctrl+S). Flip to true to restore autosave.
+ */
+export const AUTOSAVE_ENABLED = false;
+
+/**
+ * Editing of sheets too big for the main editor (BigSheetView). Off = big sheets open read-only
+ * (still scrollable to every row). Edits store typed values; formulas are not recalculated.
+ */
+export const BIG_SHEET_EDITING = true;
+
 export const DEFAULT_ROWS = 200;
 export const DEFAULT_COLS = 26;
-export const MAX_ROWS = 5000;
-export const MAX_COLS = 200;
 
 export const DEFAULT_COL_WIDTH = 116;
 export const ROW_HEADER_WIDTH = 46;

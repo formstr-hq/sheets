@@ -29,6 +29,23 @@ export function isDateFormat(format: string | undefined, value?: unknown): boole
   return /(yy|dd|d{1,2}\/|h:mm|am\/pm|\[h\])/i.test(format);
 }
 
+// Number.prototype.toLocaleString builds a new Intl.NumberFormat on every call, which dominates
+// import time for big sheets; formatters are cached by their only two options instead (same output).
+const formatters = new Map<number, Intl.NumberFormat>();
+function numberFormatter(decimals: number, useGrouping: boolean): Intl.NumberFormat {
+  const key = decimals * 2 + (useGrouping ? 1 : 0);
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      useGrouping,
+    });
+    formatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 export function formatNumberForDisplay(
   value: number,
   format: string | undefined,
@@ -43,11 +60,7 @@ export function formatNumberForDisplay(
   const decimals = decimalsMatch ? decimalsMatch[1].length : 0;
   const useGrouping = /#,##0|,/.test(format);
   const display = percent ? value * 100 : value;
-  let text = display.toLocaleString("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-    useGrouping,
-  });
+  let text = numberFormatter(decimals, useGrouping).format(display);
   if (currency) text = `$${text}`;
   if (percent) text = `${text}%`;
   return text;

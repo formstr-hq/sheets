@@ -105,6 +105,10 @@ export interface WorkbookSheet {
   defaultRowHeight?: number;
   defaultColWidth?: number;
   cells: Record<string, WorkbookCell>;
+  /** Stable id of every row in order, as runs. Absent on sheets that predate ids (see ids.ts). */
+  rowIds?: [tag: string, start: number, length: number][];
+  /** Stable id of every column in order. */
+  colIds?: string[];
   columnWidths?: Record<number, number>;
   rowHeights?: Record<number, number>;
   hiddenRows?: number[];
