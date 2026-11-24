@@ -333,7 +333,11 @@ export function readChunk(body: ChunkBody, start: number, count: number, cols?: 
   const out: Record<string, WorkbookCell> = {};
   for (const [key, cell] of Object.entries(cells)) {
     const sep = key.indexOf(":");
-    const col = colIndexOf(cols, key.slice(sep + 1), lookup);
+    const id = key.slice(sep + 1);
+    let col = colIndexOf(cols, id, lookup);
+    // A legacy id ("c3") that the column list does not hold, but whose position is inside the list, belongs to a column
+    // that was deleted: its cells are gone (it must not be read as whatever column moved into that position).
+    if (cols && col >= 0 && col < cols.length && cols[col] !== id) col = -1;
     if (col >= 0) out[`${key.slice(0, sep)}:${col}`] = cell;
   }
   return { rows, cells: out, layout, hasIds: true };

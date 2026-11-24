@@ -3508,7 +3508,7 @@ pre {
 .big-tool-divider { width: 1px; height: 18px; margin: 0 4px; background: var(--line); flex: none; }
 .big-tool-select { height: 28px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font-size: 12px; flex: none; }
 .big-tool-select.is-wide { width: 130px; }
-.big-tool-select option { color: #16181a; }
+.big-tool-select option, .big-dialog select option { color: var(--ink, #16181a); background: var(--surface, #fff); }
 
 .sheet-card-stats { display: inline-flex; gap: 6px; align-items: center; }
 .sheet-card-stats > span + span::before { content: "·"; margin-right: 6px; opacity: 0.6; }
@@ -3516,12 +3516,12 @@ pre {
 .big-tool.is-select .big-tool-select { width: 118px; border: 0; padding: 0 2px; cursor: pointer; }
 
 .big-menu-backdrop { position: fixed; inset: 0; z-index: 30; }
-.big-menu { position: fixed; z-index: 31; min-width: 200px; padding: 4px; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; }
+.big-menu { position: fixed; z-index: 31; min-width: 200px; padding: 4px; border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #16181a); border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; }
 .big-menu button { text-align: left; padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
 .big-menu button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.2); }
 .big-menu button:disabled { opacity: 0.4; cursor: default; }
 
-.big-find { position: absolute; z-index: 20; top: 104px; right: 24px; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
+.big-find { position: absolute; z-index: 20; top: 104px; right: 24px; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #16181a); border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
 .big-find-row { display: flex; align-items: center; gap: 6px; }
 .big-find-input { width: 220px; padding: 5px 8px; border-radius: 5px; border: 1px solid rgba(128, 128, 128, 0.45); background: transparent; color: inherit; font: inherit; }
 .big-find-count { min-width: 92px; opacity: 0.75; display: inline-flex; align-items: center; gap: 4px; }
@@ -3530,7 +3530,7 @@ pre {
 .big-find-opt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 .big-dialog-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
-.big-dialog { width: min(420px, calc(100vw - 32px)); padding: 18px; border-radius: 12px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.big-dialog { width: min(420px, calc(100vw - 32px)); padding: 18px; border-radius: 12px; background: var(--surface, #fff); color: var(--ink, #16181a); border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
 .big-dialog h3 { margin: 0; font-size: 16px; }
 .big-dialog-sub { margin: 0; opacity: 0.7; }
 .big-dialog-error { margin: 0; color: #e5484d; }
@@ -3544,9 +3544,10 @@ pre {
 .big-dialog-check input[type="color"] { padding: 0; width: 30px; height: 24px; }
 .big-dialog-preview { margin-left: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.35); }
 
-.big-suggest { position: absolute; z-index: 25; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 160px; max-height: 240px; overflow: auto; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
+.big-suggest { position: absolute; z-index: 25; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 160px; max-height: 240px; overflow: auto; border-radius: 8px; background: var(--surface, #fff); color: var(--ink, #16181a); border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
 .big-suggest li { padding: 5px 8px; border-radius: 5px; cursor: pointer; font-family: ui-monospace, monospace; }
-.big-suggest li.is-active, .big-suggest li:hover { background: rgba(1, 136, 251, 0.2); }
+.big-suggest li { color: var(--ink, #16181a); }
+.big-suggest li.is-active, .big-suggest li:hover { background: rgba(1, 136, 251, 0.28); }
 
 .big-menu-swatches { display: flex; gap: 6px; padding: 6px 10px; }
 .big-menu-swatch { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.5); cursor: pointer; }
@@ -3560,7 +3561,7 @@ pre {
 .big-filter-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .big-filter-count { opacity: 0.55; font-variant-numeric: tabular-nums; }
 
-.big-help { position: absolute; z-index: 24; padding: 4px 8px; border-radius: 6px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2); font: 12px ui-monospace, monospace; white-space: nowrap; pointer-events: none; }
+.big-help { position: absolute; z-index: 24; padding: 4px 8px; border-radius: 6px; background: var(--surface, #fff); color: var(--ink, #16181a); border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2); font: 12px ui-monospace, monospace; white-space: nowrap; pointer-events: none; }
 .big-help-current { font-weight: 700; text-decoration: underline; }
 .big-sheet-formula .ft-function { font-weight: 700; }
 .big-sheet-formula .ft-string { color: #16a34a; }

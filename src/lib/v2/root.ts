@@ -11,6 +11,8 @@
 import { WORKBOOK_SCHEMA, type WorkbookDocument, type WorkbookSheet } from "../workbook";
 import { base64ToBytes, bytesToBase64, frame, unframe } from "./codec";
 import { assembleChunks, colsForSheet } from "./chunks";
+import type { RowRun } from "../workbook/ids";
+import { ArrayAxis, RunAxis, formulaFromIds, hasIdRefs, type Tombstones } from "./idRefs";
 
 export const ROOT_SCHEMA = "formstr.sheets.root";
 export const ROOT_VERSION = 2;
@@ -57,6 +59,8 @@ export interface ChunkEntry {
   rowCount: number;
   /** Cells in the chunk, when the writer counted them (streamed imports do). Optional; lets a reader size a tab without downloading it. */
   cells?: number;
+  /** The ids of the chunk's rows, in order. Present when the workbook stores formulas by id (see SheetRootV2.refs): it lets a row id be found without downloading the chunks. */
+  runs?: RowRun[];
 }
 
 type TabMeta = Pick<WorkbookSheet, "id" | "name" | "order" | "hidden" | "color" | "showGridLines">;
@@ -86,6 +90,8 @@ export interface SheetRootV2 {
   epoch: number;
   /** Blossom servers that hold this sheet's blobs. Empty for inline sheets. */
   servers: string[];
+  /** "id": formulas in the chunks name rows and columns by id (spec 4.1), not by position. Absent: A1 text. */
+  refs?: "id";
   tabs: RootTab[];
 }
 
@@ -323,6 +329,7 @@ export async function parseRootV2(
       showGridLines: tab.showGridLines,
     });
   }
+  if (root.refs === "id") resolveIdRefs(sheets);
   return {
     schema: WORKBOOK_SCHEMA,
     version: 1,
@@ -332,4 +339,24 @@ export async function parseRootV2(
     updatedAt: root.updatedAt,
     sheets,
   };
+}
+
+/** Turns formulas stored by id back into A1 text, in place (a document always holds A1). */
+function resolveIdRefs(sheets: WorkbookSheet[]): void {
+  const tabs = sheets.map((sheet) => {
+    const tombs = (sheet as { tombs?: { rows: Tombstones; cols: Tombstones } }).tombs;
+    return {
+      id: sheet.id,
+      name: sheet.name,
+      rows: new RunAxis(sheet.rowIds ?? [], tombs?.rows),
+      cols: new ArrayAxis(sheet.colIds ?? [], tombs?.cols),
+    };
+  });
+  for (const sheet of sheets) {
+    const ctx = { tabs, current: sheet.id };
+    for (const cell of Object.values(sheet.cells)) {
+      if (cell.formula && hasIdRefs(cell.formula)) cell.formula = formulaFromIds(cell.formula, ctx);
+    }
+    delete (sheet as { tombs?: unknown }).tombs;
+  }
 }

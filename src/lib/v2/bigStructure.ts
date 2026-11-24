@@ -53,8 +53,12 @@ export async function editStructure(
     }
     plans.push({ tab: entry.tab, row: entry.row, col: entry.col, newRow, newCol, formula, changed: formula !== entry.formula });
   }
+  // A workbook that stores formulas by id needs no rewrite of the chunks that are not open. One that does not yet
+  // is switched over first, when few enough chunks hold formulas (they are rewritten at the next save).
+  if (!store.refsById && store.allowRefsById) await store.enableRefsById(MAX_REWRITE_CHUNKS);
+  const byId = store.refsById;
   const touched = new Set(plans.filter((p) => p.changed).map((p) => `${p.tab}:${store.chunkFor(p.tab, p.row)}`));
-  if (touched.size > MAX_REWRITE_CHUNKS) {
+  if (!byId && touched.size > MAX_REWRITE_CHUNKS) {
     throw new Error(
       "Formulas that point at the rows or columns being moved are spread over too many parts of this sheet to update at once. Try a smaller sheet, or move the formulas together first.",
     );
@@ -62,11 +66,22 @@ export async function editStructure(
 
   await store.applyEdit(tab, edit);
 
-  for (const plan of plans) {
-    if (!plan.changed) continue;
-    await store.load(plan.tab, store.chunkFor(plan.tab, plan.newRow));
-    const cell = store.cell(plan.tab, plan.newRow, plan.newCol);
-    if (cell) await store.setDerived(plan.tab, plan.newRow, plan.newCol, { ...cell, formula: plan.formula });
+  if (byId) {
+    // Chunks that are open follow in memory; the others are read later with the ids resolved against the new order.
+    store.rewriteStaleFormulas((formulaTab, formula) => {
+      try {
+        return engine.print(engine.rewriteForEdit(engine.parse(formula), formulaEdit, store.tabs[formulaTab].name)).replace(/^=/, "");
+      } catch {
+        return formula;
+      }
+    });
+  } else {
+    for (const plan of plans) {
+      if (!plan.changed) continue;
+      await store.load(plan.tab, store.chunkFor(plan.tab, plan.newRow));
+      const cell = store.cell(plan.tab, plan.newRow, plan.newCol);
+      if (cell) await store.setDerived(plan.tab, plan.newRow, plan.newCol, { ...cell, formula: plan.formula });
+    }
   }
 
   // Every formula is known and now sits at its new place: rebuild the index from the plans.
@@ -106,15 +121,20 @@ export async function renameTabAndFormulas(
       // unreadable text stays as it is
     }
   }
+  // Formulas stored by id name the tab by its id, so those in chunks that are not open follow the new name by themselves.
+  const byId = store.refsById;
   const chunks = new Set(plans.map((p) => `${p.tab}:${store.chunkFor(p.tab, p.row)}`));
-  if (chunks.size > MAX_REWRITE_CHUNKS) {
+  if (!byId && chunks.size > MAX_REWRITE_CHUNKS) {
     throw new Error("Formulas that name this tab are spread over too many parts of the sheet to update at once.");
   }
   store.renameTab(tab, newName);
   for (const plan of plans) {
-    await store.load(plan.tab, store.chunkFor(plan.tab, plan.row));
-    const cell = store.cell(plan.tab, plan.row, plan.col);
-    if (cell) await store.setDerived(plan.tab, plan.row, plan.col, { ...cell, formula: plan.formula });
+    const chunk = store.chunkFor(plan.tab, plan.row);
+    if (!byId || store.hasChunk(plan.tab, chunk)) {
+      await store.load(plan.tab, chunk);
+      const cell = store.cell(plan.tab, plan.row, plan.col);
+      if (cell) await store.setDerived(plan.tab, plan.row, plan.col, { ...cell, formula: plan.formula });
+    }
     await index.set(store, plan.tab, plan.row, plan.col, plan.formula);
   }
 }
