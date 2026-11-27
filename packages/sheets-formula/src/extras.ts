@@ -366,7 +366,79 @@ const compare2 = (test: (c: number) => boolean): Fn => (args) => {
   return test(compare(a, b));
 };
 
+/** A square block of numbers, or an error. */
+function squareMatrix(input: Value | undefined): number[][] | FormulaError {
+  if (input === undefined || !isArray(input) || input.length === 0) return new FormulaError("#VALUE!");
+  const value = input;
+  const size = value.length;
+  const out: number[][] = [];
+  for (const row of value) {
+    if (row.length !== size) return new FormulaError("#VALUE!");
+    const line: number[] = [];
+    for (const item of row) {
+      if (isError(item)) return item;
+      if (typeof item !== "number") return new FormulaError("#VALUE!");
+      line.push(item);
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/** Gauss-Jordan on [A | I]: the determinant and (when it is not 0) the inverse. */
+function eliminate(matrix: number[][]): { det: number; inverse: number[][] | null } {
+  const n = matrix.length;
+  const a = matrix.map((row, i) => [...row, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))]);
+  let det = 1;
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
+    if (Math.abs(a[pivot][col]) < 1e-12) return { det: 0, inverse: null };
+    if (pivot !== col) {
+      [a[pivot], a[col]] = [a[col], a[pivot]];
+      det = -det;
+    }
+    det *= a[col][col];
+    const scale = a[col][col];
+    for (let c = 0; c < 2 * n; c++) a[col][c] /= scale;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = a[r][col];
+      if (factor !== 0) for (let c = 0; c < 2 * n; c++) a[r][c] -= factor * a[col][c];
+    }
+  }
+  return { det, inverse: a.map((row) => row.slice(n)) };
+}
+
 export const EXTRA: Record<string, Fn> = {
+  /** ASC / DBCS convert between half- and full-width characters; a single-byte locale leaves text as it is. */
+  ASC(args) {
+    return text(args[0]);
+  },
+  DBCS(args) {
+    return text(args[0]);
+  },
+  /** INFO(type): facts about the environment. */
+  INFO(args) {
+    const kind = text(args[0]);
+    if (isError(kind)) return kind;
+    const known: Record<string, string> = { recalc: "Automatic", system: "pcdos", osversion: "Web", release: "1.0", directory: "", origin: "$A:$A$1", numfile: "1" };
+    return known[kind.toLowerCase()] ?? VALUE();
+  },
+  /** MDETERM(array): determinant of a square matrix. */
+  MDETERM(args) {
+    const matrix = squareMatrix(args[0]);
+    if (isError(matrix)) return matrix;
+    return Math.round(eliminate(matrix).det * 1e10) / 1e10;
+  },
+  /** MINVERSE(array): inverse of a square matrix (#NUM! when it has none). */
+  MINVERSE(args) {
+    const matrix = squareMatrix(args[0]);
+    if (isError(matrix)) return matrix;
+    const { inverse } = eliminate(matrix);
+    return inverse ? inverse.map((row) => row.map((v) => Math.round(v * 1e12) / 1e12)) : new FormulaError("#NUM!");
+  },
+
   /** ADDRESS(row, column, [absolute 1-4], [A1 style], [sheet]): the address of a cell as text. */
   ADDRESS(args) {
     const row = num(args[0]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Sheet } from "@fortune-sheet/core";
+import type { Sheet } from "../legacy/fortuneFormat";
 import {
   fortuneSheetsToWorkbook,
   normalizeWorkbook,

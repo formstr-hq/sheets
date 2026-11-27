@@ -1,4 +1,4 @@
-import type { Cell, CellWithRowAndCol, Sheet } from "@fortune-sheet/core";
+import type { Cell, CellWithRowAndCol, Sheet } from "../legacy/fortuneFormat";
 import { DEFAULT_COLS, DEFAULT_ROWS } from "../constants";
 import { randomId } from "../utils";
 import { celldataToMatrix } from "../sheetData";

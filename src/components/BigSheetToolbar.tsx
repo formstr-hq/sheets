@@ -35,6 +35,7 @@ import {
   Palette,
   Tag,
   UserRound,
+  Image as ImageIcon,
 } from "lucide-react";
 import type { WorkbookCellStyle } from "../lib/workbook";
 import { DEFAULT_FONT_FAMILIES } from "../lib/workbook/format";
@@ -111,6 +112,7 @@ export function BigSheetToolbar({
   onQuickFormula,
   onSearch,
   onLink,
+  onImage,
   onComment,
   onValidation,
   onPerson,
@@ -141,6 +143,7 @@ export function BigSheetToolbar({
   onQuickFormula: (name: "SUM" | "AVERAGE" | "COUNT" | "MAX" | "MIN") => void;
   onSearch: () => void;
   onLink: () => void;
+  onImage: () => void;
   onComment: () => void;
   onValidation: () => void;
   onPerson: () => void;
@@ -407,6 +410,9 @@ export function BigSheetToolbar({
       </Button>
       <Button title="Insert link" disabled={off} onClick={onLink}>
         <Link size={16} />
+      </Button>
+      <Button title="Insert image" disabled={off} onClick={onImage}>
+        <ImageIcon size={16} />
       </Button>
       <Button title="Comment" disabled={off} onClick={onComment}>
         <MessageSquare size={16} />

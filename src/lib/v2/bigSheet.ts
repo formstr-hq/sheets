@@ -7,7 +7,7 @@
 // Saving re-encrypts only the dirty chunks (plus a tab's index blob when its chunk list lives in
 // one) and uploads them under ONE signed authorization, then returns the updated root. Formulas
 // are not recalculated: an edit stores the typed value.
-import type { WorkbookCell, WorkbookConditionalRule } from "../workbook";
+import { WORKBOOK_SCHEMA, type WorkbookCell, type WorkbookConditionalRule, type WorkbookDocument, type WorkbookSheet } from "../workbook";
 import { encryptFrame, uploadStaged, type BlossomEnv, type StagedBlob, type UploadOptions } from "./blossom";
 import { concatRuns, deleteRuns, insertRuns, legacyRows, mintRows, newDeviceTag, padCols, padRuns, rowCountOf, type RowRun } from "../workbook/ids";
 import { readChunk, writeChunk, type ChunkBody as StoredChunkBody } from "./chunks";
@@ -15,7 +15,7 @@ import { frame } from "./codec";
 import { downloadTabBody } from "./blossom";
 import { editLayout, type StructEdit } from "./layoutEdit";
 import type { ColumnFilter } from "./bigFilter";
-import { FRAME_TYPE_TAB_INDEX, resolveChunks, type ChunkEntry, type RootTab, type SheetRootV2 } from "./root";
+import { FRAME_TYPE_TAB_INDEX, ROOT_SCHEMA, ROOT_VERSION, resolveChunks, type ChunkEntry, type RootTab, type SheetRootV2 } from "./root";
 import { randomId } from "../utils";
 
 /** A decoded chunk: cells are positional ("<row - chunk start>:<column index>"), rows are its row ids. */
@@ -76,10 +76,12 @@ export interface TabLayout {
   /** A filter by the values of one column: its `hidden` rows are hidden on top of rows hidden by hand. */
   filter?: ColumnFilter;
   merges?: { r: number; c: number; rs: number; cs: number }[];
+  /** Pictures floating over the cells, each anchored to a cell. */
+  images?: { id: string; src: string; row: number; col: number; dx: number; dy: number; width: number; height: number }[];
   borders?: { r1: number; c1: number; r2: number; c2: number; type: "all" | "outside" | "inside" | "top" | "bottom" | "left" | "right" | "none"; color?: string; style?: string }[];
 }
 
-const LAYOUT_KEYS = ["columnWidths", "rowHeights", "hiddenRows", "hiddenColumns", "frozen", "zoom", "conditionalFormats", "filter", "merges", "borders"] as const;
+const LAYOUT_KEYS = ["columnWidths", "rowHeights", "hiddenRows", "hiddenColumns", "frozen", "zoom", "conditionalFormats", "filter", "merges", "borders", "images"] as const;
 
 export interface BigTab {
   layout: TabLayout;
@@ -121,8 +123,100 @@ export class BigSheetStore {
     this.env = env;
   }
 
+  /** Chunk bodies of a store that lives in memory (a small sheet kept inline); then nothing is downloaded. */
+  private memory?: Map<string, StoredChunkBody>;
+
   private fetchBody = (ref: ChunkEntry["ref"], servers: string[], type?: number) =>
-    downloadTabBody(ref, [...servers, ...this.servers], this.env, type);
+    this.memory ? Promise.resolve(this.memory.get(ref.x) as StoredChunkBody) : downloadTabBody(ref, [...servers, ...this.servers], this.env, type);
+
+  /** True when this store holds a whole small sheet in memory (saved inline as a document, not as chunks). */
+  get inMemory(): boolean {
+    return !!this.memory;
+  }
+
+  /**
+   * A store over a sheet that is held whole in memory: one chunk per tab, nothing downloaded, saved by
+   * turning it back into a document (`toDocument`). It lets small, inline sheets use the big-sheet grid.
+   */
+  static fromDocument(document: WorkbookDocument): BigSheetStore {
+    const memory = new Map<string, StoredChunkBody>();
+    const tabs: RootTab[] = [];
+    const entries: ChunkEntry[][] = [];
+    document.sheets.forEach((sheet, index) => {
+      const rowCount = Math.max(sheet.rowCount, 1);
+      const colCount = Math.max(sheet.colCount, 1);
+      const colIds = padCols(sheet.colIds, colCount);
+      const layout: Record<string, unknown> = { rowCount, colCount };
+      for (const key of LAYOUT_KEYS) {
+        const value = (sheet as unknown as Record<string, unknown>)[key];
+        if (value !== undefined) layout[key] = structuredClone(value);
+      }
+      const rows = sheet.rowIds && rowCountOf(sheet.rowIds) === rowCount ? sheet.rowIds : legacyRows(0, rowCount);
+      const ref = { x: `mem-${index}`, k: "", n: 0, p: 0, c: 0, h: "" };
+      memory.set(ref.x, writeChunk({ rows, cells: structuredClone(sheet.cells), layout, hasIds: true }, colIds));
+      const { id, name, order, hidden, color, showGridLines } = sheet;
+      tabs.push({ id, name, order, hidden, color, showGridLines, cols: colIds });
+      entries.push([{ id: `mem-${index}`, ref, rowStart: 0, rowCount }]);
+    });
+    const root: SheetRootV2 = {
+      schema: ROOT_SCHEMA,
+      v: ROOT_VERSION,
+      title: document.title,
+      activeSheetId: document.activeSheetId,
+      createdAt: document.createdAt,
+      updatedAt: document.updatedAt,
+      epoch: 0,
+      servers: [],
+      tabs: tabs.map((tab, index) => ({ ...tab, chunks: entries[index] })),
+    };
+    const store = new BigSheetStore(root, []);
+    store.memory = memory;
+    return store;
+  }
+
+  /** The whole workbook as a document (every tab, every loaded or edited chunk). For stores made by `fromDocument`. */
+  async toDocument(): Promise<WorkbookDocument> {
+    const sheets: WorkbookSheet[] = [];
+    for (let t = 0; t < this.tabs.length; t++) {
+      const tab = this.tabs[t];
+      const meta = this.tabRoots[t];
+      const cells: Record<string, WorkbookCell> = {};
+      const runs: RowRun[][] = [];
+      for (let c = 0; c < tab.chunks.length; c++) {
+        const body = await this.load(t, c);
+        const start = tab.chunks[c].rowStart;
+        runs.push(body.rows ?? legacyRows(start, tab.chunks[c].rowCount));
+        for (const [key, cell] of Object.entries(body.cells ?? {})) {
+          const at = key.indexOf(":");
+          cells[`${Number(key.slice(0, at)) + start}:${key.slice(at + 1)}`] = cell;
+        }
+      }
+      const sheet: WorkbookSheet = {
+        id: meta.id,
+        name: meta.name,
+        order: meta.order,
+        rowCount: tab.rows,
+        colCount: tab.cols,
+        cells,
+        rowIds: concatRuns(...runs),
+        colIds: [...tab.colIds],
+      };
+      if (meta.hidden) sheet.hidden = true;
+      if (meta.color) sheet.color = meta.color;
+      if (meta.showGridLines !== undefined) sheet.showGridLines = meta.showGridLines;
+      for (const key of LAYOUT_KEYS) if (tab.layout[key] !== undefined) (sheet as unknown as Record<string, unknown>)[key] = structuredClone(tab.layout[key]);
+      sheets.push(sheet);
+    }
+    return {
+      schema: WORKBOOK_SCHEMA,
+      version: 1,
+      title: this.root.title,
+      activeSheetId: this.root.activeSheetId,
+      createdAt: this.root.createdAt,
+      updatedAt: Date.now(),
+      sheets,
+    };
+  }
 
   /** Reads every tab's chunk list and each tab's first chunk (it carries the size and layout). */
   async open(): Promise<void> {
@@ -820,6 +914,26 @@ export class BigSheetStore {
     };
     Object.assign(this.root, root);
     this.tabRoots = root.tabs.map((tab) => ({ ...tab }));
+    this.markSaved();
+    return root;
+  }
+
+  /** Index of the tab the sheet was left on (the first visible tab when that one is gone or hidden). */
+  activeTab(): number {
+    const at = this.tabRoots.findIndex((tab) => tab.id === this.root.activeSheetId && !tab.hidden);
+    if (at >= 0) return at;
+    const visible = this.tabRoots.findIndex((tab) => !tab.hidden);
+    return visible >= 0 ? visible : 0;
+  }
+
+  /** Remembers which tab is open (it is saved with the sheet; not a change that needs saving). */
+  setActiveTab(index: number): void {
+    const id = this.tabRoots[index]?.id;
+    if (id) this.root.activeSheetId = id;
+  }
+
+  /** Everything now counts as saved (after `save`, or after an in-memory store was written out as a document). */
+  markSaved(): void {
     this.metaDirty = false;
     this.dirty.clear();
     // Structural steps describe the state from before this save; once it is saved they (and the steps below them) cannot be undone.
@@ -829,7 +943,6 @@ export class BigSheetStore {
     });
     if (last >= 0) this.undoStack.splice(0, last + 1);
     this.emit();
-    return root;
   }
 }
 

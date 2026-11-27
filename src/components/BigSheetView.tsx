@@ -24,7 +24,7 @@ import {
 import type { SheetRootV2 } from "../lib/v2/root";
 import { uploadProgress } from "../lib/v2/progress";
 import type { LibraryEntry } from "../lib/types";
-import type { WorkbookCell } from "../lib/workbook";
+import type { WorkbookCell, WorkbookDocument } from "../lib/workbook";
 import { cellDisplay } from "../lib/workbook/format";
 import { BigFindBar } from "./BigFindBar";
 import { exportBigSheet } from "../lib/v2/bigExport";
@@ -33,7 +33,7 @@ import { fileSafeName } from "../lib/utils";
 import { PersonDialog, TagDialog, type PersonChoice } from "./CellMetaDialogs";
 import { useAuth } from "../providers/AuthProvider";
 import { useProfiles } from "../providers/ProfileProvider";
-import { colorFromString, shortNpub, toNpub } from "../lib/utils";
+import { colorFromString, randomId, shortNpub, toNpub } from "../lib/utils";
 import type { UserRef } from "../lib/types";
 import { BigValidationDialog } from "./BigValidationDialog";
 import { BigConditionalDialog } from "./BigConditionalDialog";
@@ -148,18 +148,35 @@ function tabData(store: BigSheetStore, tab: number): GridData {
   };
 }
 
-export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: SheetRootV2 }) {
+export function BigSheetView({
+  entry,
+  root,
+  document,
+  host,
+}: {
+  entry: LibraryEntry;
+  root?: SheetRootV2;
+  document?: WorkbookDocument;
+  /** The editor around a small sheet: it owns saving, so the grid reports to it (and asks it to save). */
+  host?: {
+    onStore: (store: BigSheetStore) => void;
+    onDirtyChange: (dirty: boolean) => void;
+    save: () => Promise<void>;
+    saving: boolean;
+  };
+}) {
   const library = useLibrary();
   const auth = useAuth();
   const profiles = useProfiles();
   const { toast } = useToast();
   // Created once per root: recreating it (e.g. when the server list loads) would drop unsaved edits.
   const serversRef = useRef(library.blossomServers);
-  const store = useMemo(() => new BigSheetStore(root, serversRef.current), [root]);
+  // A small sheet comes as a document and is held in memory; a big one comes as a root and is read a chunk at a time.
+  const store = useMemo(() => (document ? BigSheetStore.fromDocument(document) : new BigSheetStore(root as SheetRootV2, serversRef.current)), [root, document]);
   const [ready, setReady] = useState(false);
   const [openError, setOpenError] = useState("");
   const [tab, setTab] = useState(0);
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
   /** Style copied by the paint-format button, applied to the next selection. */
   const [painting, setPainting] = useState<WorkbookCell["style"] | null>(null);
@@ -194,6 +211,10 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
   const cancelled = useRef(false);
   /** The cells of the last copy, so pasting them keeps formulas and formats. */
   const clipboard = useRef<Block | null>(null);
+  /** The formula text before a reference was picked by click or drag (a drag rewrites the reference after it). */
+  const refBase = useRef<string | null>(null);
+  /** How far the cell editor's text is scrolled sideways (the colour layer follows it). */
+  const [editScroll, setEditScroll] = useState(0);
   const canEdit = BIG_SHEET_EDITING && !!entry.editKey;
   // The grid's callbacks are created once, so they read the latest state through these refs.
   const live = useRef({ canEdit, editing, painting, tab });
@@ -204,7 +225,11 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
     setReady(false);
     store
       .open()
-      .then(() => !cancelled && setReady(true))
+      .then(() => {
+        if (cancelled) return;
+        setTab(store.activeTab());
+        setReady(true);
+      })
       .catch((error) => !cancelled && setOpenError(error instanceof Error ? error.message : String(error)));
     // Toolbar state (undo/redo, dirty count) follows the store; the grid redraws itself.
     const off = store.subscribe(() => setVersion((n) => n + 1));
@@ -325,8 +350,17 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
         // While a formula waits for an operand ("=", "=A1+", "=SUM("), a click inserts that cell's address.
         const current = live.current.editing;
         if (!current || !/^=(?:.*[-+*/^&(,<>=:;])?$/.test(current.text)) return false;
+        refBase.current = current.text;
         setEditing({ ...current, text: `${current.text}${columnName(cell.col)}${cell.row + 1}` });
         return true;
+      },
+      onReferenceDrag: (from, to) => {
+        const current = live.current.editing;
+        if (!current || refBase.current === null) return;
+        const a = `${columnName(from.col)}${from.row + 1}`;
+        const b = `${columnName(to.col)}${to.row + 1}`;
+        const range = a === b ? a : `${columnName(Math.min(from.col, to.col))}${Math.min(from.row, to.row) + 1}:${columnName(Math.max(from.col, to.col))}${Math.max(from.row, to.row) + 1}`;
+        setEditing({ ...current, text: refBase.current + range });
       },
       onZoom: (zoom) => {
         // Zoom is a view setting: it is remembered with the sheet when it can be edited.
@@ -334,6 +368,14 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
         if (live.current.canEdit) store.setLayout(live.current.tab, { zoom: zoom === 1 ? undefined : zoom }).catch(() => {});
       },
       onContextMenu: (info) => setMenu({ x: info.x, y: info.y }),
+      images: () => store.tabs[live.current.tab]?.layout.images ?? [],
+      onImageChange: (id, change) => {
+        if (!live.current.canEdit) return;
+        const tabNo = live.current.tab;
+        const list = store.tabs[tabNo].layout.images ?? [];
+        const next = change ? list.map((image) => (image.id === id ? { ...image, ...change } : image)) : list.filter((image) => image.id !== id);
+        store.setLayout(tabNo, { images: next.length > 0 ? next : undefined }).catch(() => {});
+      },
       onResize: (kind, index, size) => {
         // Resizing in a read-only sheet only lasts until the page is closed.
         if (!live.current.canEdit) return;
@@ -788,6 +830,36 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
   };
 
   /** Asks for an address and links the selected cells to it (an empty answer leaves things as they are). */
+  /** Picks a picture, shrinks it to at most 640 px wide and floats it at the active cell. */
+  const insertImage = async () => {
+    const input = window.document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, 640 / bitmap.width);
+        const width = Math.max(20, Math.round(bitmap.width * scale));
+        const height = Math.max(20, Math.round(bitmap.height * scale));
+        const canvas = window.document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")?.drawImage(bitmap, 0, 0, width, height);
+        const src = canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.85);
+        if (src.length > 1_500_000) throw new Error("That picture is too large even after shrinking it.");
+        const layout = store.tabs[tab].layout;
+        const at = active ?? { row: 0, col: 0 };
+        await store.setLayout(tab, { images: [...(layout.images ?? []), { id: randomId(), src, row: at.row, col: at.col, dx: 4, dy: 4, width, height }] });
+        toast("Picture added. Drag it to move it, drag its corner to resize it, Delete removes it.", "success");
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "Couldn't add that picture.", "error");
+      }
+    };
+    input.click();
+  };
+
   const editLink = () => {
     if (!canEdit || !range) return;
     const current = active ? store.cell(tab, active.row, active.col)?.link?.url : undefined;
@@ -877,7 +949,23 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
       : []),
   ];
 
+  // A small sheet's editor learns about the store and about unsaved changes.
+  useEffect(() => host?.onStore(store), [host?.onStore, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wasDirty = useRef(false);
+  useEffect(() => {
+    const now = store.dirtyCount > 0;
+    if (now === wasDirty.current) return;
+    wasDirty.current = now;
+    host?.onDirtyChange(now);
+  }, [version, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Which tab is open is remembered with the sheet.
+  useEffect(() => store.setActiveTab(tab), [store, tab]);
+
   const save = useCallback(async () => {
+    if (host) {
+      if (store.dirtyCount > 0) await host.save();
+      return;
+    }
     if (store.dirtyCount === 0 || saving) return;
     setSaving(true);
     try {
@@ -908,9 +996,10 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
     } finally {
       setSaving(false);
     }
-  }, [entry, library, saving, store, toast]);
+  }, [entry, host, library, saving, store, toast]);
 
   useEffect(() => {
+    if (host) return; // the editor around a small sheet handles Ctrl+S
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -919,7 +1008,7 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [save]);
+  }, [host, save]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -1120,6 +1209,7 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
         filtered={!!store.tabs[tab].layout.filter}
         onFilter={() => setFiltering(true)}
         onLink={editLink}
+        onImage={() => void insertImage()}
         onComment={editComment}
         onQuickFormula={(name) => void quickFormula(name)}
         onSearch={() => setFinding({ replace: false })}
@@ -1194,15 +1284,15 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
           }}
         />
         <span className="big-sheet-note">
-          {calculating ?? (store.tabs[tab].layout.filter && !selectedCell?.comment ? `Filter on column ${columnName(store.tabs[tab].layout.filter.col)} ${store.tabs[tab].layout.filter.summary} · ${store.tabs[tab].layout.filter.hidden.length.toLocaleString()} rows hidden` : selectedCell?.comment ? `💬 ${selectedCell.comment}` : totals || `${rows.toLocaleString()} rows · large sheet mode${canEdit ? "" : " · read-only"}`)}
+          {calculating ?? (store.tabs[tab].layout.filter && !selectedCell?.comment ? `Filter on column ${columnName(store.tabs[tab].layout.filter.col)} ${store.tabs[tab].layout.filter.summary} · ${store.tabs[tab].layout.filter.hidden.length.toLocaleString()} rows hidden` : selectedCell?.comment ? `💬 ${selectedCell.comment}` : totals || `${rows.toLocaleString()} rows${store.inMemory ? "" : " · large sheet mode"}${canEdit ? "" : " · read-only"}`)}
         </span>
         <button type="button" className="big-sheet-calc" disabled={!!calculating} onClick={() => void downloadXlsx()} title="Download every tab as an .xlsx file">
           Download .xlsx
         </button>
         {canEdit && (
-          <button type="button" className="btn btn-primary btn-sm" disabled={saving || store.dirtyCount === 0} onClick={() => void save()}>
-            {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
-            {store.dirtyCount ? `Save ${store.dirtyCount} changed chunk${store.dirtyCount === 1 ? "" : "s"}` : "Saved"}
+          <button type="button" className="btn btn-primary btn-sm" disabled={saving || !!host?.saving || store.dirtyCount === 0} onClick={() => void save()}>
+            {saving || host?.saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+            {store.dirtyCount ? (store.inMemory ? "Save" : `Save ${store.dirtyCount} changed chunk${store.dirtyCount === 1 ? "" : "s"}`) : "Saved"}
           </button>
         )}
       </div>
@@ -1362,11 +1452,31 @@ export function BigSheetView({ entry, root }: { entry: LibraryEntry; root: Sheet
             ))}
           </datalist>
         )}
+        {editing && editRect && editing.text.startsWith("=") && (
+          // The formula's references and functions in colour, drawn over the (transparent-text) input.
+          <div className="big-cell-hl" style={{ top: editRect.y, left: editRect.x, width: Math.max(editRect.width, 120), height: editRect.height }} aria-hidden>
+            <span style={{ transform: `translateX(${-editScroll}px)` }}>
+              {["=", ...tokenizeFormula(editing.text.slice(1))].map((token, i) =>
+                typeof token === "string" ? (
+                  <span key={i} className="ft-operator">
+                    {token}
+                  </span>
+                ) : (
+                  <span key={i} className={`ft-${token.kind}`} style={token.kind === "ref" ? { color: REF_COLORS[(token.color ?? 0) % REF_COLORS.length] } : undefined}>
+                    {token.text}
+                  </span>
+                ),
+              )}
+            </span>
+          </div>
+        )}
         {editing && editRect && (
           <input
-            className="big-cell-input"
+            className={`big-cell-input${editing.text.startsWith("=") ? " is-formula" : ""}`}
             style={{ top: editRect.y, left: editRect.x, width: Math.max(editRect.width, 120), height: editRect.height }}
             autoFocus
+            onSelect={(event) => setEditScroll(event.currentTarget.scrollLeft)}
+            onKeyUp={(event) => setEditScroll(event.currentTarget.scrollLeft)}
             value={editing.text}
             list={store.cell(tab, editing.row, editing.col)?.validation?.type === "list" ? "big-validation-options" : undefined}
             onChange={(event) => {

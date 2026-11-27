@@ -7,6 +7,8 @@ import { isArray, isError, toBoolean, toNumber } from "./coerce";
 import type { Context } from "./evaluate";
 import { BOND_FUNCTIONS } from "./bonds";
 import { EXTRA, UPPERCASE_RESULTS } from "./extras";
+import { parse } from "./parser";
+import { columnName } from "./refs";
 import { ERROR_CODES, FormulaError, type Node, type Scalar, type Value } from "./types";
 
 export interface LazyContext {
@@ -107,6 +109,83 @@ export const LAZY_FUNCTIONS: Record<string, LazyFunction> = {
     const names = ctx.sheetNames?.() ?? [ctx.sheet];
     const at = names.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase());
     return at < 0 ? new FormulaError("#N/A") : at + 1;
+  },
+  /** INDIRECT(text): the cell or range a piece of text names. */
+  INDIRECT(args, { evaluate }) {
+    const text = scalar(evaluate(args[0] ?? { t: "missing" }));
+    if (isError(text)) return text;
+    if (typeof text !== "string" || args[1] !== undefined && scalar(evaluate(args[1])) === false) return new FormulaError("#REF!");
+    let node: Node;
+    try {
+      node = parse(text.trim());
+    } catch {
+      return new FormulaError("#REF!");
+    }
+    if (node.t !== "ref" && node.t !== "range") return new FormulaError("#REF!");
+    return evaluate(node);
+  },
+  /** OFFSET(reference, rows, cols, [height], [width]): a range moved from a starting reference. */
+  OFFSET(args, { evaluate }) {
+    const base = args[0];
+    if (!base || (base.t !== "ref" && base.t !== "range")) return new FormulaError("#VALUE!");
+    const number = (node: Node | undefined, fallback: number): number | FormulaError => {
+      if (!node || node.t === "missing") return fallback;
+      const value = toNumber(scalar(evaluate(node)));
+      return isError(value) ? value : Math.trunc(value);
+    };
+    const dr = number(args[1], 0);
+    const dc = number(args[2], 0);
+    if (isError(dr)) return dr;
+    if (isError(dc)) return dc;
+    const startRow = base.t === "ref" ? base.ref.row : base.ref.r1;
+    const startCol = base.t === "ref" ? base.ref.col : base.ref.c1;
+    const baseHeight = base.t === "ref" ? 1 : (base.ref.r2 ?? startRow) - startRow + 1;
+    const baseWidth = base.t === "ref" ? 1 : (base.ref.c2 ?? startCol) - startCol + 1;
+    const height = number(args[3], baseHeight);
+    const width = number(args[4], baseWidth);
+    if (isError(height)) return height;
+    if (isError(width)) return width;
+    const r1 = startRow + dr;
+    const c1 = startCol + dc;
+    if (height < 1 || width < 1 || r1 < 0 || c1 < 0) return new FormulaError("#REF!");
+    const sheet = base.ref.sheet;
+    if (height === 1 && width === 1) return evaluate({ t: "ref", ref: { sheet, row: r1, col: c1, rowAbs: false, colAbs: false } });
+    return evaluate({ t: "range", ref: { sheet, r1, c1, r2: r1 + height - 1, c2: c1 + width - 1, r1Abs: false, c1Abs: false, r2Abs: false, c2Abs: false } });
+  },
+  /** CELL(info, [reference]): facts about a cell (address, row, col, contents, type). */
+  CELL(args, { ctx, evaluate }) {
+    const info = scalar(evaluate(args[0] ?? { t: "missing" }));
+    if (isError(info)) return info;
+    const target = args[1];
+    let row = ctx.row ?? 0;
+    let col = ctx.col ?? 0;
+    let sheet = ctx.sheet;
+    if (target && target.t !== "missing") {
+      if (target.t === "ref") ({ row, col } = target.ref);
+      else if (target.t === "range") ({ r1: row, c1: col } = target.ref);
+      else return new FormulaError("#VALUE!");
+      sheet = target.ref.sheet ?? ctx.sheet;
+    }
+    switch (String(info).toLowerCase()) {
+      case "address":
+        return "$" + columnName(col) + "$" + (row + 1);
+      case "row":
+        return row + 1;
+      case "col":
+        return col + 1;
+      case "contents":
+        return ctx.getCell(sheet, row, col) ?? null;
+      case "type": {
+        const value = ctx.getCell(sheet, row, col);
+        return value === undefined || value === null ? "b" : typeof value === "string" ? "l" : "v";
+      }
+      case "filename":
+        return sheet;
+      case "width":
+        return 8;
+      default:
+        return new FormulaError("#VALUE!");
+    }
   },
   ROW(args, { ctx }) {
     const target = args[0];
@@ -324,7 +403,7 @@ export function callFunction(name: string, args: (Value | undefined)[], ctx: Con
 
 /** Every function name the engine can evaluate (own, lazy and formulajs), sorted. Dotted names look like NORM.DIST. */
 export function functionNames(): string[] {
-  const names = new Set<string>([...Object.keys(LAZY_FUNCTIONS), ...Object.keys(OWN)]);
+  const names = new Set<string>([...Object.keys(LAZY_FUNCTIONS), ...Object.keys(OWN), ...Object.keys(LEGACY_NAMES), ...Object.keys(LEGACY_ADAPTERS)]);
   const walk = (node: unknown, prefix: string, depth: number) => {
     if (!node || typeof node !== "object" || depth > 2) return;
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {

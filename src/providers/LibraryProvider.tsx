@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { nip19, type Event } from "nostr-tools";
-import type { Sheet } from "@fortune-sheet/core";
+import type { Sheet } from "../lib/legacy/fortuneFormat";
 import {
   CLIENT_TAG,
   KIND_BLOSSOM_SERVERS,
@@ -25,6 +25,7 @@ import {
   generateDocKeys,
   sheetEventFromRoot,
   storedBytesOf,
+  storedBytesOfEvent,
   type TabMemory,
 } from "../lib/crypto";
 import { importXlsxToBlossom } from "../lib/v2/streamImport";
@@ -395,10 +396,25 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // Builds the sheet event. If the sheet is too big to store inline and we have not seen any
   // Blossom servers, look the list up again once (it may have been added since sign-in).
   // Remembers a sheet's stored size on its library entry (shown on the dashboard card).
-  const sizesRef = useRef(new Map<string, number>());
+  const sizesRef = useRef(
+    new Map<string, number>(
+      (() => {
+        try {
+          return Object.entries(JSON.parse(window.localStorage.getItem("formstr-sheets:sizes") ?? "{}") as Record<string, number>);
+        } catch {
+          return [];
+        }
+      })(),
+    ),
+  );
   const noteSize = useCallback(
     (coordinate: string, bytes: number) => {
       sizesRef.current.set(coordinate, bytes);
+      try {
+        window.localStorage.setItem("formstr-sheets:sizes", JSON.stringify(Object.fromEntries(sizesRef.current)));
+      } catch {
+        // Sizes are a convenience; the card just shows none.
+      }
       const current = entriesRef.current.find((item) => item.coordinate === coordinate);
       if (!current || current.storedBytes === bytes) return;
       replaceEntries(
@@ -407,6 +423,31 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     },
     [replaceEntries],
   );
+
+  // Cards whose size is not known yet get it from the sheet's latest event (a small download; the blobs are not fetched).
+  const sizeLookups = useRef(new Set<string>());
+  useEffect(() => {
+    const missing = entries.filter((entry) => !entry.storedBytes && !sizesRef.current.has(entry.coordinate) && !sizeLookups.current.has(entry.coordinate));
+    if (missing.length === 0 || relays.length === 0) return;
+    let stopped = false;
+    void (async () => {
+      for (const entry of missing) {
+        if (stopped) return;
+        sizeLookups.current.add(entry.coordinate);
+        try {
+          const event = await fetchLatestEvent(relays, { kinds: [KIND_SHEET], authors: [entry.editPubkey], "#d": [entry.id], limit: 1 }, 6000);
+          const bytes = event ? storedBytesOfEvent(event, entry.viewKey) : null;
+          if (bytes) noteSize(entry.coordinate, bytes);
+        } catch {
+          // Try again the next time the list loads.
+          sizeLookups.current.delete(entry.coordinate);
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [entries, noteSize, relays]);
 
   const buildEvent = useCallback(
     async (coordinate: string, params: Omit<Parameters<typeof buildSheetEvent>[0], "blossom">) => {
@@ -1180,7 +1221,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<LibraryContextValue>(
     () => ({
-      entries,
+      entries: entries.map((entry) => (entry.storedBytes ? entry : { ...entry, storedBytes: sizesRef.current.get(entry.coordinate) })),
       loading,
       error,
       refresh,

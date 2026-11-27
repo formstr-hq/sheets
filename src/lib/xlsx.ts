@@ -1,5 +1,5 @@
 import type * as ExcelJS from "exceljs";
-import type { Cell, CellWithRowAndCol, Sheet } from "@fortune-sheet/core";
+import type { Cell, CellWithRowAndCol, Sheet } from "./legacy/fortuneFormat";
 import { DEFAULT_COLS, DEFAULT_ROWS } from "./constants";
 import { fileSafeName, randomId } from "./utils";
 import { valueFromExcelCell } from "./xlsxCells";

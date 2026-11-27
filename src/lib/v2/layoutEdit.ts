@@ -88,6 +88,12 @@ export function editLayout(layout: TabLayout, edit: StructEdit): TabLayout {
   });
   if (rules.length > 0) out.conditionalFormats = rules;
 
+  const images = (layout.images ?? []).flatMap((image) => {
+    const at = moveIndex(row ? image.row : image.col, edit);
+    return at === null ? [] : [row ? { ...image, row: at } : { ...image, col: at }];
+  });
+  if (images.length > 0) out.images = images;
+
   if (layout.filter) {
     const col = row ? layout.filter.col : moveIndex(layout.filter.col, edit);
     if (col !== null) {

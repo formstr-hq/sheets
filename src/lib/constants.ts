@@ -29,6 +29,18 @@ export const AUTOSAVE_ENABLED = false;
  */
 export const BIG_SHEET_EDITING = true;
 
+/**
+ * Opens small sheets in the big-sheet grid too (held in memory, saved inline) instead of FortuneSheet.
+ * Opt-in while the new grid reaches parity: add `grid=new` to the address. Remove with FortuneSheet.
+ */
+export function newGridRequested(): boolean {
+  try {
+    return /[?&]grid=new/.test(window.location.href);
+  } catch {
+    return false;
+  }
+}
+
 export const DEFAULT_ROWS = 200;
 export const DEFAULT_COLS = 26;
 
