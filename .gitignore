@@ -15,3 +15,4 @@ pnpm-debug.log*
 .vercel/
 .vercel
 .env*
+dist-spike/

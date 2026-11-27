@@ -110,3 +110,55 @@ describe("canonical workbook", () => {
     expect(doc.sheets[0].cells["0:0"].value).toBe("hello");
   });
 });
+
+describe("per-cell sheet data keys (FortuneSheet uses row_col)", () => {
+  const base = (cells: Record<string, unknown>) =>
+    normalizeWorkbook({
+      schema: WORKBOOK_SCHEMA,
+      version: 1,
+      title: "Keys",
+      activeSheetId: "s",
+      createdAt: 1,
+      updatedAt: 1,
+      sheets: [{ id: "s", name: "S", order: 0, rowCount: 200, colCount: 26, cells }],
+    });
+
+  it("writes validations and links under row_col so FortuneSheet reads them", () => {
+    const doc = base({
+      "2:3": { value: "Done", validation: { type: "dropdown", options: ["Todo", "Done"] } },
+      "4:1": { value: "site", link: { url: "https://example.com" } },
+    });
+    const [sheet] = workbookToFortuneSheets(doc);
+    expect(Object.keys(sheet.dataVerification ?? {})).toEqual(["2_3"]);
+    expect(Object.keys((sheet as unknown as { hyperlink: object }).hyperlink)).toEqual(["4_1"]);
+  });
+
+  it("round-trips validations and links through FortuneSheet's own key format", () => {
+    const doc = base({
+      "2:3": { value: "Done", validation: { type: "dropdown", options: ["Todo", "Done"] } },
+      "4:1": { value: "site", link: { url: "https://example.com" } },
+    });
+    const back = fortuneSheetsToWorkbook({ title: "Keys", sheets: workbookToFortuneSheets(doc) });
+    expect(back.sheets[0].cells["2:3"].validation?.options).toEqual(["Todo", "Done"]);
+    expect(back.sheets[0].cells["4:1"].link?.url).toBe("https://example.com");
+  });
+
+  it("keeps a link on an empty cell and still reads documents saved with row:col keys", () => {
+    const sheets = [
+      {
+        id: "s",
+        name: "S",
+        order: 0,
+        status: 1,
+        row: 200,
+        column: 26,
+        celldata: [{ r: 1, c: 1, v: { v: "x", m: "x" } }],
+        hyperlink: { "5_5": { linkType: "webpage", linkAddress: "https://a.test" } },
+        dataVerification: { "1:1": { type: "dropdown", value1: "a,b" } },
+      },
+    ] as unknown as Sheet[];
+    const doc = fortuneSheetsToWorkbook({ title: "Legacy", sheets });
+    expect(doc.sheets[0].cells["5:5"]?.link?.url).toBe("https://a.test");
+    expect(doc.sheets[0].cells["1:1"]?.validation?.options).toEqual(["a", "b"]);
+  });
+});

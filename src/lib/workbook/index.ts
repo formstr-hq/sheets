@@ -19,6 +19,7 @@ export {
 
 export {
   createEmptyWorkbook,
+  cellFromFortune,
   createWorkbookFromFortune,
   collectReferencedPubkeys,
   fortuneSheetsToWorkbook,
@@ -35,3 +36,5 @@ export {
   isDateFormat,
   toDateSerial,
 } from "./format";
+
+export * from "./ids";

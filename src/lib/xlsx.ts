@@ -2,11 +2,9 @@ import type * as ExcelJS from "exceljs";
 import type { Cell, CellWithRowAndCol, Sheet } from "@fortune-sheet/core";
 import { DEFAULT_COLS, DEFAULT_ROWS } from "./constants";
 import { fileSafeName, randomId } from "./utils";
+import { valueFromExcelCell } from "./xlsxCells";
 import {
-  formatNumberForDisplay,
   fromDateSerial as fromSerial,
-  isDateFormat,
-  toDateSerial as toSerial,
   workbookToFortuneSheets,
   type WorkbookDocument,
 } from "./workbook";
@@ -18,171 +16,12 @@ async function loadExcelJS(): Promise<ExcelJSModule> {
   return ((imported as unknown as { default?: ExcelJSModule }).default ?? imported) as ExcelJSModule;
 }
 
-function argbToHex(value: unknown): string | undefined {
-  if (!value) return undefined;
-  if (typeof value === "string") {
-    if (/^[0-9a-f]{8}$/i.test(value)) return `#${value.slice(2)}`;
-    if (/^#[0-9a-f]{6}$/i.test(value)) return value;
-  }
-  if (typeof value === "object" && value && "argb" in value) {
-    const argb = (value as { argb?: string }).argb;
-    if (argb && /^[0-9a-f]{8}$/i.test(argb)) return `#${argb.slice(2)}`;
-  }
-  return undefined;
-}
-
 function hexToArgb(value?: string): string | undefined {
   if (!value) return undefined;
   const clean = value.replace("#", "");
   if (clean.length === 6) return `FF${clean.toUpperCase()}`;
   if (clean.length === 8) return clean.toUpperCase();
   return undefined;
-}
-
-function cellStyle(cell: ExcelJS.Cell, format: string | undefined): Partial<Cell> {
-  const style: Partial<Cell> = {};
-  const font = cell.font;
-  if (font?.bold) style.bl = 1;
-  if (font?.italic) style.it = 1;
-  if (font?.underline) style.un = 1;
-  if (font?.strike) style.cl = 1;
-  if (font?.size) style.fs = font.size;
-  if (font?.name) style.ff = font.name;
-  const fontColor = argbToHex(font?.color);
-  if (fontColor) style.fc = fontColor;
-  const fillColor = argbToHex(
-    cell.fill && cell.fill.type === "pattern" ? cell.fill.fgColor : undefined,
-  );
-  if (fillColor) style.bg = fillColor;
-  const horizontal = cell.alignment?.horizontal;
-  if (horizontal === "left") style.ht = 1;
-  else if (horizontal === "center") style.ht = 0;
-  else if (horizontal === "right") style.ht = 2;
-  const vertical = cell.alignment?.vertical;
-  if (vertical === "top") style.vt = 1;
-  else if (vertical === "middle") style.vt = 0;
-  else if (vertical === "bottom") style.vt = 2;
-  if (cell.alignment?.wrapText) style.tb = "2";
-  if (format && format !== "General" && format !== "@") {
-    style.ct = {
-      fa: format,
-      t: isDateFormat(format, cell.value) ? "d" : "n",
-    };
-  }
-  return style;
-}
-
-function valueFromExcelCell(cell: ExcelJS.Cell): Cell | null {
-  if (cell.master && cell.master.address && cell.master.address !== cell.address) return null;
-  const raw = cell.value;
-  const format = typeof cell.numFmt === "string" ? cell.numFmt : undefined;
-
-  if (raw === null || raw === undefined) return null;
-
-  if (typeof raw === "object" && raw && "formula" in raw) {
-    const formulaValue = raw as {
-      formula?: string;
-      sharedFormula?: string;
-      result?: unknown;
-      text?: string;
-    };
-    const formula = formulaValue.formula ?? formulaValue.sharedFormula ?? "";
-    const result = formulaValue.result;
-    const isDate = result instanceof Date || isDateFormat(format, result);
-    const errorText =
-      result && typeof result === "object" && "error" in result
-        ? String((result as { error: unknown }).error)
-        : null;
-    const numericResult =
-      typeof result === "number"
-        ? result
-        : result instanceof Date
-          ? toSerial(result)
-          : Number(result);
-    const hasResult = result !== undefined && result !== null;
-    const value =
-      errorText ??
-      (hasResult
-        ? Number.isFinite(numericResult)
-          ? numericResult
-          : String(result)
-        : 0);
-    const display = errorText
-      ? errorText
-      : typeof value === "number"
-        ? formatNumberForDisplay(value, format)
-        : result instanceof Date
-          ? result.toISOString().slice(0, 10)
-          : String(result ?? "");
-    return {
-      ...cellStyle(cell, format),
-      f: formula.startsWith("=") ? formula : `=${formula}`,
-      v: value,
-      m: display,
-      ct: {
-        fa: format || (isDate ? "yyyy-mm-dd" : "General"),
-        t: isDate ? "d" : typeof value === "string" ? "s" : "n",
-      },
-    };
-  }
-
-  if (raw instanceof Date) {
-    const serial = toSerial(raw);
-    return {
-      ...cellStyle(cell, format),
-      v: serial,
-      m: cell.text || raw.toISOString().slice(0, 10),
-      ct: { fa: format || "yyyy-mm-dd", t: "d" },
-    };
-  }
-
-  if (typeof raw === "number") {
-    return {
-      ...cellStyle(cell, format),
-      v: raw,
-      m: formatNumberForDisplay(raw, format),
-      ct: { fa: format || "General", t: isDateFormat(format, raw) ? "d" : "n" },
-    };
-  }
-
-  if (typeof raw === "boolean") {
-    return {
-      ...cellStyle(cell, format),
-      v: raw,
-      m: raw ? "TRUE" : "FALSE",
-      ct: { fa: "General", t: "b" },
-    };
-  }
-
-  if (typeof raw === "object" && raw && "richText" in raw) {
-    const text = (raw as { richText: Array<{ text: string }> }).richText
-      .map((part) => part.text)
-      .join("");
-    return {
-      ...cellStyle(cell, format),
-      v: text,
-      m: text,
-      ct: { fa: "General", t: "s" },
-    };
-  }
-
-  if (typeof raw === "object" && raw && "text" in raw) {
-    const text = String((raw as { text: unknown }).text ?? "");
-    return {
-      ...cellStyle(cell, format),
-      v: text,
-      m: text,
-      ct: { fa: "General", t: "s" },
-    };
-  }
-
-  const text = String(raw);
-  return {
-    ...cellStyle(cell, format),
-    v: text,
-    m: text,
-    ct: { fa: format && format !== "General" ? format : "General", t: "s" },
-  };
 }
 
 function decodeAddress(address: string): { row: number; column: number } | null {
@@ -524,14 +363,16 @@ export function exportActiveSheetCsv(document: WorkbookDocument, sheetId?: strin
     maxRow = Math.max(maxRow, item.r);
     maxCol = Math.max(maxCol, item.c);
   }
+  // Index the cells once: a lookup per grid position would be quadratic on a big sheet.
+  const byPosition = new Map<number, string>();
+  for (const item of celldata) {
+    const cell = item.v;
+    if (cell) byPosition.set(item.r * (maxCol + 1) + item.c, String(cell.m ?? cell.v ?? ""));
+  }
   const rows: string[][] = [];
   for (let r = 0; r <= maxRow; r++) {
     const row: string[] = [];
-    for (let c = 0; c <= maxCol; c++) {
-      const cell = celldata.find((item) => item.r === r && item.c === c)?.v;
-      const text = cell ? String(cell.m ?? cell.v ?? "") : "";
-      row.push(text);
-    }
+    for (let c = 0; c <= maxCol; c++) row.push(byPosition.get(r * (maxCol + 1) + c) ?? "");
     rows.push(row);
   }
   const csv = rows

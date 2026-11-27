@@ -42,6 +42,20 @@ export function parseCellKey(key: string): { row: number; col: number } | null {
   return { row, col };
 }
 
+/** 1536 -> "1.5 KB". Uses 1024-based units, like most file managers. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }

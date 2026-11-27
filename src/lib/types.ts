@@ -42,6 +42,8 @@ export interface LibraryEntry {
   lastEventAt?: number;
   lastEventId?: string;
   source?: "owned" | "grant" | "link";
+  /** Bytes the sheet takes in storage (encrypted root plus its Blossom blobs), as last seen. */
+  storedBytes?: number;
 }
 
 export interface SheetIndexPayload {

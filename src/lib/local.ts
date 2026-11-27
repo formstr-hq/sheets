@@ -11,11 +11,13 @@ function read<T>(key: string): T | null {
   }
 }
 
-function write(key: string, value: unknown): void {
+function write(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify(value));
+    return true;
   } catch {
-    // ignore quota / private mode failures
+    // quota / private mode failures
+    return false;
   }
 }
 
@@ -39,18 +41,27 @@ export function loadDocCache(entry: LibraryEntry): DocCache | null {
   return read<DocCache>(`doc:${entry.coordinate}`);
 }
 
+/**
+ * Stores the device copy of a sheet. Returns false when it could not be stored
+ * (usually because a large sheet exceeds the localStorage quota). In that case
+ * any older copy is removed: left in place, an older copy marked pending would
+ * be preferred on the next load over the newer version.
+ */
 export function saveDocCache(
   entry: LibraryEntry,
   doc: SheetDocument,
   meta: { savedAt?: number; eventCreatedAt?: number; eventId?: string; pending?: boolean } = {},
-): void {
-  write(`doc:${entry.coordinate}`, {
+): boolean {
+  const key = `doc:${entry.coordinate}`;
+  const stored = write(key, {
     doc,
     savedAt: meta.savedAt ?? Date.now(),
     eventCreatedAt: meta.eventCreatedAt,
     eventId: meta.eventId,
     pending: meta.pending,
   } satisfies DocCache);
+  if (!stored) remove(key);
+  return stored;
 }
 
 export function removeDocCache(entry: LibraryEntry): void {
@@ -103,4 +114,24 @@ export function setTheme(theme: "light" | "dark"): void {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", theme === "dark" ? "#0d0f10" : "#faf8f5");
+}
+
+/**
+ * Which of the user's Blossom servers uploads go to. Every ticked server gets a copy of every
+ * blob, so ticking N servers means N-fold upload bandwidth and storage.
+ */
+export interface UploadPrefs {
+  /** Servers the user unticked: still used to read sheets, never uploaded to. */
+  off: string[];
+}
+
+export function loadUploadPrefs(pubkey: string): UploadPrefs {
+  const stored = read<Partial<UploadPrefs>>(`upload-prefs:${pubkey}`);
+  return {
+    off: Array.isArray(stored?.off) ? stored.off.filter((url) => typeof url === "string") : [],
+  };
+}
+
+export function saveUploadPrefs(pubkey: string, prefs: UploadPrefs): void {
+  write(`upload-prefs:${pubkey}`, prefs);
 }

@@ -1,0 +1,36 @@
+{
+  "name": "@formstr/sheets-formula",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Spreadsheet formulas: parser, reference rewriting and a lazy evaluator for the browser.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist",
+    "spike": "node spike/coverage.mjs"
+  },
+  "dependencies": {
+    "@formulajs/formulajs": "4.6.1"
+  },
+  "devDependencies": {
+    "@sheetxl/formulas": "1.0.7",
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

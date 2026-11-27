@@ -45,8 +45,17 @@ function cellKey(row: number, col: number): string {
   return `${row}:${col}`;
 }
 
+/**
+ * FortuneSheet keys per-cell sheet data (dataVerification, hyperlink) as "row_col", unlike our "row:col".
+ * Documents saved by earlier versions of this app wrote them with ":" (which FortuneSheet ignores),
+ * so reads accept both.
+ */
+function fortuneKey(row: number, col: number): string {
+  return `${row}_${col}`;
+}
+
 function parseCellKey(key: string): { row: number; col: number } | null {
-  const [row, col] = key.split(":").map(Number);
+  const [row, col] = key.split(/[:_]/).map(Number);
   if (!Number.isFinite(row) || !Number.isFinite(col)) return null;
   return { row, col };
 }
@@ -182,7 +191,7 @@ function validationToFortune(
   };
 }
 
-function cellFromFortune(
+export function cellFromFortune(
   cell: Cell | null,
   validation: unknown,
   link?: { url: string; label?: string },
@@ -533,18 +542,20 @@ export function fortuneSheetsToWorkbook(
       const matrixRow = matrix[row];
       for (let col = 0; col < matrixRow.length; col++) {
         const key = cellKey(row, col);
+        const sheetKey = fortuneKey(row, col);
         const cell = cellFromFortune(
           matrixRow[col],
-          verification[key],
-          links[key],
+          verification[sheetKey] ?? verification[key],
+          links[sheetKey] ?? links[key],
         );
         if (cell) cells[key] = cell;
       }
     }
-    for (const [key, link] of Object.entries(links)) {
-      if (cells[key]) continue;
-      const parsed = parseCellKey(key);
+    for (const [fortuneCellKey, link] of Object.entries(links)) {
+      const parsed = parseCellKey(fortuneCellKey);
       if (!parsed) continue;
+      const key = cellKey(parsed.row, parsed.col);
+      if (cells[key]) continue;
       cells[key] = { link };
     }
     const config = sheet.config ?? {};
@@ -630,10 +641,10 @@ export function workbookToFortuneSheets(document: WorkbookDocument): Sheet[] {
       celldata.push({ r: parsed.row, c: parsed.col, v: fortune });
       if (canonical.validation) {
         const rangeText = `${columnLetter(parsed.col)}${parsed.row + 1}`;
-        dataVerification[key] = validationToFortune(canonical.validation, rangeText);
+        dataVerification[fortuneKey(parsed.row, parsed.col)] = validationToFortune(canonical.validation, rangeText);
       }
       if (link) {
-        hyperlink[key] = { linkType: "webpage", linkAddress: link.url };
+        hyperlink[fortuneKey(parsed.row, parsed.col)] = { linkType: "webpage", linkAddress: link.url };
       }
     }
     const config: Sheet["config"] = {

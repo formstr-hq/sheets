@@ -13,6 +13,8 @@ import {
   Eye,
   FileDown,
   FileSpreadsheet,
+  HardDrive,
+  Info,
   KeyRound,
   Loader2,
   LockKeyhole,
@@ -23,12 +25,17 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
+import { AUTOSAVE_ENABLED } from "../lib/constants";
+import { OPEN_MAX_CELLS, SheetTooLargeToOpenError, type SheetRootV2, type SheetSize } from "../lib/v2/root";
+import { BigSheetView } from "./BigSheetView";
 import { Avatar } from "./Avatar";
 import { Dialog } from "./Dialog";
 import { Menu, MenuItem, MenuSeparator } from "./Menu";
 import { LogoMark } from "./Logo";
 import { PersonDialog, TagDialog, type PersonChoice } from "./CellMetaDialogs";
 import { ShareDialog } from "./ShareDialog";
+import { StorageServersDialog } from "./StorageServersDialog";
+import { FileInfoDialog } from "./FileInfoDialog";
 import { useAuth } from "../providers/AuthProvider";
 import { useLibrary } from "../providers/LibraryProvider";
 import { useProfiles } from "../providers/ProfileProvider";
@@ -36,6 +43,7 @@ import { useToast } from "../providers/ToastProvider";
 import { drawCellPill } from "../lib/cellRender";
 import { saveDocCache } from "../lib/local";
 import { sheetsForUpdate } from "../lib/sheetData";
+import { localDeviceIds, SheetIdTracker } from "../lib/workbook/sheetIds";
 import {
   collectReferencedPubkeys,
   fortuneSheetsToWorkbook,
@@ -128,7 +136,7 @@ function saveLabel(state: SaveState, lastSavedAt?: number): string {
     case "saving":
       return "Saving…";
     case "unsaved":
-      return "Unsaved changes";
+      return AUTOSAVE_ENABLED ? "Unsaved changes" : "Unsaved changes - press Ctrl+S to save";
     case "offline":
       return "Saved locally";
     case "readonly":
@@ -184,6 +192,9 @@ export function Editor() {
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Set when the sheet is too big for the editor: shown instead of the grid, nothing is downloaded.
+  const [tooLarge, setTooLarge] = useState<SheetSize | null>(null);
+  const [bigRoot, setBigRoot] = useState<SheetRootV2 | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const saveStateRef = useRef<SaveState>("idle");
   const [lastSavedAt, setLastSavedAt] = useState<number | undefined>(undefined);
@@ -194,11 +205,16 @@ export function Editor() {
   const [personOpen, setPersonOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [infoDoc, setInfoDoc] = useState<SheetDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
   const selectionRef = useRef<SelectionRange[]>([]);
 
   const workbookRef = useRef<WorkbookInstance>(null);
   const sheetsRef = useRef<Sheet[]>([]);
+  // Row and column ids follow the editor's inserts and deletes, so a row keeps its id when others move.
+  const idsRef = useRef<SheetIdTracker | null>(null);
+  idsRef.current ??= new SheetIdTracker(localDeviceIds());
   const loadedRef = useRef(false);
   const applyingRemoteRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
@@ -228,13 +244,14 @@ export function Editor() {
         sheetsRef.current.length > 0
           ? sheetsRef.current
           : workbookToFortuneSheets(currentDoc);
-      return fortuneSheetsToWorkbook({
+      const built = fortuneSheetsToWorkbook({
         title: currentDoc.title,
         createdAt: currentDoc.createdAt,
         updatedAt,
         activeSheetId: activeId ?? currentDoc.activeSheetId,
         sheets,
       });
+      return { ...built, sheets: idsRef.current ? idsRef.current.attach(built.sheets) : built.sheets };
     },
     [],
   );
@@ -301,6 +318,8 @@ export function Editor() {
   const scheduleSave = useCallback(() => {
     if (!entryRef.current?.editKey) return;
     updateSaveState("unsaved");
+    // With autosave off a change only marks the sheet unsaved; the user saves explicitly.
+    if (!AUTOSAVE_ENABLED) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
@@ -318,6 +337,10 @@ export function Editor() {
     [markDirty, scheduleSave],
   );
 
+  const handleOp = useCallback((ops: { op: string; id?: string; value?: unknown }[]) => {
+    for (const op of ops) idsRef.current?.apply(op);
+  }, []);
+
   const applyRemote = useCallback(
     (remoteDoc: SheetDocument, event: Event) => {
       const currentEntry = entryRef.current;
@@ -328,6 +351,7 @@ export function Editor() {
           ? { ...remoteDoc, activeSheetId: activeId }
           : remoteDoc;
       const fortuneSheets = workbookToFortuneSheets(prepared);
+      idsRef.current?.seed(prepared.sheets);
       applyingRemoteRef.current = true;
       setSheetDocument(prepared);
       documentRef.current = prepared;
@@ -361,6 +385,8 @@ export function Editor() {
     let cancelled = false;
     setLoading(true);
     setError("");
+    setTooLarge(null);
+    setBigRoot(null);
     setRemoteUpdate(null);
     setSheetDocument(null);
     documentRef.current = null;
@@ -381,6 +407,7 @@ export function Editor() {
         if (cancelled) return;
         const doc = result.doc;
         const fortuneSheets = workbookToFortuneSheets(doc);
+        idsRef.current?.seed(doc.sheets);
         setSheetDocument(doc);
         documentRef.current = doc;
         setTitle(doc.title);
@@ -412,12 +439,15 @@ export function Editor() {
         const referenced = collectReferencedPubkeys(doc);
         if (referenced.length > 0) void profiles.ensureProfiles(referenced);
         if (currentEntry.source === "link" && auth.pubkey) library.addLinkEntry(currentEntry);
-        if (pending && currentEntry.editKey) {
+        if (AUTOSAVE_ENABLED && pending && currentEntry.editKey) {
           window.setTimeout(() => void saveNowRef.current(), 1200);
         }
       })
       .catch((err) => {
         if (cancelled) return;
+        setTooLarge(err instanceof SheetTooLargeToOpenError ? err.size : null);
+        setBigRoot(err instanceof SheetTooLargeToOpenError ? (err.root ?? null) : null);
+        if (err instanceof SheetTooLargeToOpenError && err.root) setTitle(err.root.title);
         setError(err instanceof Error ? err.message : "Couldn't open this spreadsheet.");
         setLoading(false);
       });
@@ -485,10 +515,10 @@ export function Editor() {
       event.returnValue = "";
     };
     const onVisibility = () => {
-      if (document.visibilityState === "hidden" && dirtyRef.current) void saveNowRef.current();
+      if (AUTOSAVE_ENABLED && document.visibilityState === "hidden" && dirtyRef.current) void saveNowRef.current();
     };
     const onOnline = () => {
-      if (saveStateRef.current === "offline" && dirtyRef.current) void saveNowRef.current();
+      if (AUTOSAVE_ENABLED && saveStateRef.current === "offline" && dirtyRef.current) void saveNowRef.current();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -513,9 +543,15 @@ export function Editor() {
       const currentEntry = entryRef.current;
       const currentDoc = documentRef.current;
       if (currentEntry?.editKey && dirtyRef.current && currentDoc) {
-        void library
-          .saveDocument(currentEntry, buildCurrentWorkbook(currentDoc, Date.now()))
-          .catch(() => {});
+        if (AUTOSAVE_ENABLED) {
+          void library
+            .saveDocument(currentEntry, buildCurrentWorkbook(currentDoc, Date.now()))
+            .catch(() => {});
+        } else {
+          // No network save without the user's say-so: keep a local draft so leaving the page
+          // does not lose the edits (too-big drafts do not fit in local storage and are skipped).
+          saveDocCache(currentEntry, buildCurrentWorkbook(currentDoc, Date.now()), { pending: true });
+        }
       }
     };
   }, [buildCurrentWorkbook, library.saveDocument]);
@@ -806,7 +842,21 @@ export function Editor() {
     <div className="editor-page">
       <header className="editor-topbar">
         <div className="editor-topbar-left">
-          <button type="button" className="icon-btn" onClick={() => navigate("/")} aria-label="Back to sheets">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => {
+              if (
+                !AUTOSAVE_ENABLED &&
+                dirtyRef.current &&
+                !window.confirm("You have unsaved changes. Leave without saving? (They stay as a local draft on this device.)")
+              ) {
+                return;
+              }
+              navigate("/");
+            }}
+            aria-label="Back to sheets"
+          >
             <ArrowLeft size={18} />
           </button>
           <LogoMark size={28} />
@@ -932,6 +982,25 @@ export function Editor() {
                 )}
                 <MenuSeparator />
                 <MenuItem
+                  icon={<Info size={15} />}
+                  label="File info"
+                  onClick={() => {
+                    close();
+                    const currentDoc = documentRef.current;
+                    // Measure what is open right now, including unsaved edits.
+                    if (currentDoc) setInfoDoc(buildCurrentWorkbook(currentDoc, Date.now()));
+                  }}
+                />
+                <MenuItem
+                  icon={<HardDrive size={15} />}
+                  label="Storage servers"
+                  onClick={() => {
+                    close();
+                    setStorageOpen(true);
+                  }}
+                />
+                <MenuSeparator />
+                <MenuItem
                   icon={<Trash2 size={15} />}
                   label={entry.role === "owner" ? "Delete spreadsheet" : "Remove from my sheets"}
                   danger
@@ -970,7 +1039,37 @@ export function Editor() {
         </div>
       )}
 
-      {error ? (
+      {error && bigRoot && entry ? (
+        <BigSheetView entry={entry} root={bigRoot} />
+      ) : error && tooLarge ? (
+        <div className="editor-error editor-error-inline">
+          <AlertTriangle size={24} />
+          <h2>Too large to edit in the browser yet</h2>
+          <p>
+            This sheet is stored and encrypted
+            {tooLarge.cells !== null ? ` (${tooLarge.cells.toLocaleString()} cells` : ` (${(tooLarge.bytes / 1024 / 1024).toFixed(0)} MB compressed`}
+            {`, ${tooLarge.tabs.length} tab${tooLarge.tabs.length === 1 ? "" : "s"})`}, but the editor can only open
+            sheets up to {OPEN_MAX_CELLS.toLocaleString()} cells for now.
+          </p>
+          <table className="too-large-tabs">
+            <tbody>
+              {tooLarge.tabs.map((tab) => (
+                <tr key={tab.name}>
+                  <td>{tab.name}</td>
+                  <td>{tab.cells !== null ? `${tab.cells.toLocaleString()} cells` : ""}</td>
+                  <td>{tab.chunks ? `${tab.chunks} chunk${tab.chunks === 1 ? "" : "s"}` : "chunk index"}</td>
+                  <td>{(tab.bytes / 1024 / 1024).toFixed(1)} MB</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="empty-actions">
+            <button type="button" className="btn btn-outline" onClick={() => navigate("/")}>
+              Back to sheets
+            </button>
+          </div>
+        </div>
+      ) : error ? (
         <div className="editor-error editor-error-inline">
           <AlertTriangle size={24} />
           <h2>Couldn't open this sheet</h2>
@@ -1014,6 +1113,7 @@ export function Editor() {
             hooks={hooks}
             customToolbarItems={customToolbarItems}
             onChange={handleChange}
+            onOp={handleOp}
           />
         </div>
       )}
@@ -1083,6 +1183,14 @@ export function Editor() {
             : ""}
         </p>
       </Dialog>
+
+      <StorageServersDialog open={storageOpen} onClose={() => setStorageOpen(false)} />
+      <FileInfoDialog
+        open={infoDoc !== null}
+        onClose={() => setInfoDoc(null)}
+        doc={infoDoc}
+        lastSavedAt={lastSavedAt}
+      />
     </div>
   );
 }
