@@ -299,3 +299,55 @@ describe("function coverage", () => {
     expect(names.filter((name) => !isKnownFunction(name))).toEqual([]);
   });
 });
+
+describe("functionNames", () => {
+  it("lists what the engine can evaluate, sorted, with dotted names", async () => {
+    const { functionNames, isKnownFunction } = await import("./index");
+    const names = functionNames();
+    expect(names.length).toBeGreaterThan(300);
+    for (const name of ["SUM", "VLOOKUP", "IF", "IFERROR", "NORM.DIST", "SUMIFS"]) expect(names).toContain(name);
+    expect([...names].sort()).toEqual(names);
+    expect(names.every((name) => isKnownFunction(name))).toBe(true);
+  });
+});
+
+describe("ADDRESS, HYPERLINK, LENB, FINDB and the Google conversions", () => {
+  const run = (formula: string) => calculate(formula, { sheet: "Sheet1", getCell: () => undefined });
+  it("builds addresses in every style", () => {
+    expect(run("ADDRESS(2,3)")).toBe("$C$2");
+    expect(run("ADDRESS(2,3,4)")).toBe("C2");
+    expect(run("ADDRESS(2,3,2)")).toBe("C$2");
+    expect(run("ADDRESS(2,3,3)")).toBe("$C2");
+    expect(run("ADDRESS(2,28,4)")).toBe("AB2");
+    expect(run("ADDRESS(2,3,1,FALSE)")).toBe("R2C3");
+    expect(run('ADDRESS(1,1,1,TRUE,"Data")')).toBe("Data!$A$1");
+    expect(run('ADDRESS(1,1,4,TRUE,"My Sheet")')).toBe("'My Sheet'!A1");
+    expect(run("ADDRESS(0,1)")).toBeInstanceOf(FormulaError);
+  });
+  it("covers the small helpers", () => {
+    expect(run('HYPERLINK("https://a.test","Go")')).toBe("Go");
+    expect(run('HYPERLINK("https://a.test")')).toBe("https://a.test");
+    expect(run('LENB("abc")')).toBe(3);
+    expect(run('FINDB("c","abcabc",4)')).toBe(6);
+    expect(run('FINDB("x","abc")')).toBeInstanceOf(FormulaError);
+    expect(run("TO_TEXT(12)")).toBe("12");
+    expect(run("TO_PERCENT(0.5)")).toBe(0.5);
+    expect(run("UNARY_PERCENT(50)")).toBe(0.5);
+    expect(run("TO_DATE(45000.7)")).toBe(45000);
+    expect(run("TO_PURE_NUMBER(7)")).toBe(7);
+  });
+});
+
+describe("number formats shown in big sheets", () => {
+  it("formats currency tokens, scientific, time and dates", async () => {
+    const { formatValue } = await import("./index");
+    expect(formatValue(1234.5, "[$€-407] #,##0.00")).toBe("€ 1,234.50");
+    expect(formatValue(1234.5, "[$£-809]#,##0.00")).toBe("£1,234.50");
+    expect(formatValue(1234.5, "[$CHF-807] #,##0.00")).toBe("CHF 1,234.50");
+    expect(formatValue(1234.5, "0.00E+00")).toBe("1.23E+03");
+    expect(formatValue(45000.75, "h:mm:ss AM/PM")).toBe("6:00:00 PM");
+    expect(formatValue(45000.75, "yyyy-mm-dd hh:mm:ss")).toBe("2023-03-15 18:00:00");
+    expect(formatValue(45000, "mmmm d, yyyy")).toBe("March 15, 2023");
+    expect(formatValue(-2, "#,##0.00;[Red]-#,##0.00")).toBe("-2.00");
+  });
+});

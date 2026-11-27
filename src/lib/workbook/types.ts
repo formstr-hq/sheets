@@ -48,6 +48,8 @@ export interface WorkbookCell {
   tag?: string;
   validation?: WorkbookValidation;
   link?: WorkbookLink;
+  /** A note attached to the cell (shown with a red corner mark). */
+  comment?: string;
 }
 
 export interface WorkbookMerge {
@@ -90,6 +92,8 @@ export interface WorkbookConditionalRule {
   format: {
     textColor?: string;
     cellColor?: string;
+    /** Colour scales: the colour of the highest value (cellColor is the lowest). */
+    toColor?: string;
   };
 }
 

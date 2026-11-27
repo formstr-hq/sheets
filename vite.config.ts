@@ -12,6 +12,8 @@ export default defineConfig({
   test: { testTimeout: 30_000 },
   resolve: {
     alias: [
+      { find: "@formstr/sheets-formula", replacement: here("./packages/sheets-formula/src/index.ts") },
+      { find: "@formstr/sheets-grid", replacement: here("./packages/sheets-grid/src/index.ts") },
       // --- Streaming xlsx import (src/lib/xlsxStream) ------------------------------------------
       // The import worker bundles a few ExcelJS parser files (worksheet-reader, styles-xform,
       // parse-sax, ...). They `require` Node modules they never execute on our code path, so the

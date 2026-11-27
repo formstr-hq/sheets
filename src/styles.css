@@ -3726,15 +3726,18 @@ pre {
 }
 
 /* Large sheet mode (BigSheetView): looks like the main editor's grid (white sheet, grey headers). */
-.big-sheet { flex: 1; min-height: 0; min-width: 0; width: 100%; overflow: hidden; display: flex; flex-direction: column; outline: none; background: var(--bg); }
+.big-sheet { flex: 1; min-height: 0; min-width: 0; width: 100%; overflow: hidden; position: relative; display: flex; flex-direction: column; outline: none; background: var(--bg); }
 .big-sheet-bar { flex: none; display: flex; align-items: center; height: 30px; border-bottom: 1px solid var(--line); font-size: 13px; }
-.big-sheet-ref { width: 90px; padding: 0 10px; font-size: 12px; font-variant-numeric: tabular-nums; border-right: 1px solid var(--line); line-height: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.big-sheet-ref:focus { box-shadow: inset 0 0 0 2px #0188fb; }
+.big-sheet-ref { width: 90px; padding: 0 10px; background: transparent; color: inherit; border: 0; outline: none; font-family: inherit; font-size: 12px; font-variant-numeric: tabular-nums; border-right: 1px solid var(--line); line-height: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .big-sheet-fx { padding: 0 10px; color: var(--muted); font-style: italic; font-family: Georgia, serif; border-right: 1px solid var(--line); line-height: 30px; }
 .big-sheet-formula { flex: 1; min-width: 0; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 12px; }
 .big-sheet-goto { width: 100px; height: 22px; margin-right: 8px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font-size: 12px; }
 .big-sheet-note { margin-right: 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .big-sheet-bar .btn { margin-right: 8px; height: 24px; }
 .big-sheet-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; position: relative; background: #fff; color: #000; color-scheme: light; }
+.big-sheet-canvas { overflow: hidden; }
+.big-sheet-host { position: absolute; inset: 0; }
 .big-sheet-viewport { position: sticky; top: 0; left: 0; overflow: hidden; }
 .big-cell, .big-row-head, .big-col-head, .big-cell-input { position: absolute; box-sizing: border-box; font-family: var(--font), Arial, sans-serif; }
 .big-cell { padding: 0 4px; font-size: 11pt; line-height: 29px; border-right: 1px solid #e1e4e8; border-bottom: 1px solid #e1e4e8; white-space: nowrap; overflow: hidden; text-overflow: clip; cursor: cell; color: #000; }
@@ -3764,3 +3767,63 @@ pre {
 
 .sheet-card-stats { display: inline-flex; gap: 6px; align-items: center; }
 .sheet-card-stats > span + span::before { content: "·"; margin-right: 6px; opacity: 0.6; }
+.big-tool.is-select { gap: 2px; }
+.big-tool.is-select .big-tool-select { width: 118px; border: 0; padding: 0 2px; cursor: pointer; }
+
+.big-menu-backdrop { position: fixed; inset: 0; z-index: 30; }
+.big-menu { position: fixed; z-index: 31; min-width: 200px; padding: 4px; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; }
+.big-menu button { text-align: left; padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.big-menu button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.2); }
+.big-menu button:disabled { opacity: 0.4; cursor: default; }
+
+.big-find { position: absolute; z-index: 20; top: 104px; right: 24px; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
+.big-find-row { display: flex; align-items: center; gap: 6px; }
+.big-find-input { width: 220px; padding: 5px 8px; border-radius: 5px; border: 1px solid rgba(128, 128, 128, 0.45); background: transparent; color: inherit; font: inherit; }
+.big-find-count { min-width: 92px; opacity: 0.75; display: inline-flex; align-items: center; gap: 4px; }
+.big-find-btn { display: inline-flex; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.big-find-btn:hover { background: rgba(128, 128, 128, 0.2); }
+.big-find-opt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+.big-dialog-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.big-dialog { width: min(420px, calc(100vw - 32px)); padding: 18px; border-radius: 12px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.big-dialog h3 { margin: 0; font-size: 16px; }
+.big-dialog-sub { margin: 0; opacity: 0.7; }
+.big-dialog-error { margin: 0; color: #e5484d; }
+.big-dialog-field { display: flex; flex-direction: column; gap: 4px; }
+.big-dialog-row { display: flex; gap: 8px; }
+.big-dialog select, .big-dialog input, .big-dialog textarea { padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.45); background: transparent; color: inherit; font: inherit; min-width: 0; }
+.big-dialog-row input { flex: 1; width: 0; }
+.big-dialog-actions { display: flex; gap: 8px; align-items: center; }
+
+.big-dialog-check { display: inline-flex; align-items: center; gap: 6px; }
+.big-dialog-check input[type="color"] { padding: 0; width: 30px; height: 24px; }
+.big-dialog-preview { margin-left: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.35); }
+
+.big-suggest { position: absolute; z-index: 25; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 160px; max-height: 240px; overflow: auto; border-radius: 8px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 12px; }
+.big-suggest li { padding: 5px 8px; border-radius: 5px; cursor: pointer; font-family: ui-monospace, monospace; }
+.big-suggest li.is-active, .big-suggest li:hover { background: rgba(1, 136, 251, 0.2); }
+
+.big-menu-swatches { display: flex; gap: 6px; padding: 6px 10px; }
+.big-menu-swatch { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.5); cursor: pointer; }
+.big-menu .big-menu-swatch:hover:not(:disabled) { outline: 2px solid rgba(1, 136, 251, 0.6); background-clip: padding-box; }
+.big-menu-title { padding: 6px 10px 2px; font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.big-filter-list { max-height: 260px; overflow: auto; border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; }
+.big-filter-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.big-filter-item:hover { background: rgba(128, 128, 128, 0.15); }
+.big-filter-item input { width: auto; }
+.big-filter-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.big-filter-count { opacity: 0.55; font-variant-numeric: tabular-nums; }
+
+.big-help { position: absolute; z-index: 24; padding: 4px 8px; border-radius: 6px; background: var(--surface, #fff); color: inherit; border: 1px solid rgba(128, 128, 128, 0.35); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2); font: 12px ui-monospace, monospace; white-space: nowrap; pointer-events: none; }
+.big-help-current { font-weight: 700; text-decoration: underline; }
+.big-sheet-formula .ft-function { font-weight: 700; }
+.big-sheet-formula .ft-string { color: #16a34a; }
+.big-sheet-formula .ft-number { color: #0369a1; }
+.big-sheet-formula .ft-operator { opacity: 0.7; }
+
+.big-sheet-calc { padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.4); background: transparent; color: inherit; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.big-sheet-calc.is-stale { border-color: #f76b15; }
+.big-sheet-calc:disabled { opacity: 0.5; cursor: default; }
+
+.big-filter-swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(128, 128, 128, 0.5); flex: none; }

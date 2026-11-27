@@ -2,6 +2,7 @@
 // with extreme digits, TEXT (number and date formats), date/time text parsing, regular expressions,
 // XLOOKUP, and the small operator-named functions (ADD, GT, ...). Arguments arrive already evaluated.
 import { compare, isArray, isError, numberToText, toNumber, toText } from "./coerce";
+import { columnName } from "./refs";
 import { FormulaError, type Scalar, type Value } from "./types";
 
 type Args = (Value | undefined)[];
@@ -84,6 +85,11 @@ function pieces(section: string): Piece[] {
       const body = end < 0 ? "" : section.slice(i + 1, end);
       // [h], [mm], [ss] are elapsed-time counters; colours and conditions are dropped.
       if (/^(h+|m+|s+)$/i.test(body)) out.push({ kind: "tok", text: `[${body.toLowerCase()}]` });
+      // [$€-407] is a currency symbol (the part after the dash is the locale).
+      else if (body.startsWith("$")) {
+        const symbol = body.slice(1).split("-")[0];
+        if (symbol) out.push({ kind: "lit", text: symbol });
+      }
       i = end < 0 ? section.length : end;
     } else {
       out.push({ kind: "tok", text: ch });
@@ -361,6 +367,79 @@ const compare2 = (test: (c: number) => boolean): Fn => (args) => {
 };
 
 export const EXTRA: Record<string, Fn> = {
+  /** ADDRESS(row, column, [absolute 1-4], [A1 style], [sheet]): the address of a cell as text. */
+  ADDRESS(args) {
+    const row = num(args[0]);
+    const col = num(args[1]);
+    if (isError(row)) return row;
+    if (isError(col)) return col;
+    if (row < 1 || col < 1) return VALUE();
+    const kind = args[2] === undefined ? 1 : num(args[2]);
+    if (isError(kind)) return kind;
+    if (kind < 1 || kind > 4) return VALUE();
+    const a1 = args[3] === undefined ? true : first(args[3]) !== false && first(args[3]) !== 0;
+    const rowAbs = kind === 1 || kind === 2;
+    const colAbs = kind === 1 || kind === 3;
+    const r = Math.trunc(row);
+    const c = Math.trunc(col);
+    const cell = a1
+      ? `${colAbs ? "$" : ""}${columnName(c - 1)}${rowAbs ? "$" : ""}${r}`
+      : `R${rowAbs ? r : `[${r}]`}C${colAbs ? c : `[${c}]`}`;
+    if (args[4] === undefined) return cell;
+    const sheet = text(args[4]);
+    if (isError(sheet)) return sheet;
+    return `${/^[A-Za-z_][A-Za-z0-9_.]*$/.test(sheet) ? sheet : `'${sheet.replace(/'/g, "''")}'`}!${cell}`;
+  },
+
+  /** HYPERLINK(url, [label]): shows the label (or the address); the cell's link is set separately. */
+  HYPERLINK(args) {
+    const url = text(args[0]);
+    if (isError(url)) return url;
+    if (args[1] === undefined) return url;
+    const label = first(args[1]);
+    return label === null ? "" : label;
+  },
+
+  /** LENB / FINDB count characters (a single-byte locale has no double-byte characters). */
+  LENB(args) {
+    const value = text(args[0]);
+    return isError(value) ? value : value.length;
+  },
+  FINDB(args) {
+    const needle = text(args[0]);
+    const hay = text(args[1]);
+    const start = args[2] === undefined ? 1 : num(args[2]);
+    if (isError(needle)) return needle;
+    if (isError(hay)) return hay;
+    if (isError(start)) return start;
+    if (start < 1 || start > hay.length + 1) return VALUE();
+    const at = hay.indexOf(needle, Math.trunc(start) - 1);
+    return at < 0 ? VALUE() : at + 1;
+  },
+
+  // Google Sheets conversions: the value stays, only how it is shown differs.
+  TO_TEXT(args) {
+    const value = first(args[0]);
+    return isError(value) ? value : toText(value);
+  },
+  TO_PURE_NUMBER(args) {
+    return num(args[0]);
+  },
+  TO_PERCENT(args) {
+    return num(args[0]);
+  },
+  TO_DOLLARS(args) {
+    return num(args[0]);
+  },
+  TO_DATE(args) {
+    const value = num(args[0]);
+    return isError(value) ? value : Math.floor(value);
+  },
+  UNARY_PERCENT(args) {
+    const value = num(args[0]);
+    return isError(value) ? value : value / 100;
+  },
+
   ROUND: rounder("half"),
   ROUNDUP: rounder("up"),
   ROUNDDOWN: rounder("down"),
@@ -376,6 +455,20 @@ export const EXTRA: Record<string, Fn> = {
       if (!isError(asNumber) && raw.trim() !== "") value = asNumber;
     }
     return formatValue(value, format);
+  },
+
+  // Text to number the way a cell would read it; text that is no number, date or time is #VALUE!.
+  VALUE(args) {
+    const raw = first(args[0]);
+    if (isError(raw)) return raw;
+    if (typeof raw === "number") return raw;
+    if (typeof raw === "boolean" || raw === null) return VALUE();
+    const asNumber = toNumber(raw);
+    if (!isError(asNumber)) return asNumber;
+    const time = parseTime(raw);
+    if (time !== null) return time;
+    const date = parseDate(raw);
+    return date === null ? VALUE() : date;
   },
 
   DATEVALUE(args) {

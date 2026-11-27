@@ -322,6 +322,21 @@ export function callFunction(name: string, args: (Value | undefined)[], ctx: Con
   }
 }
 
+/** Every function name the engine can evaluate (own, lazy and formulajs), sorted. Dotted names look like NORM.DIST. */
+export function functionNames(): string[] {
+  const names = new Set<string>([...Object.keys(LAZY_FUNCTIONS), ...Object.keys(OWN)]);
+  const walk = (node: unknown, prefix: string, depth: number) => {
+    if (!node || typeof node !== "object" || depth > 2) return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(key)) continue;
+      if (typeof value === "function") names.add(prefix + key);
+      else walk(value, `${prefix}${key}.`, depth + 1);
+    }
+  };
+  walk(formulajs, "", 0);
+  return [...names].filter((name) => isKnownFunction(name)).sort();
+}
+
 /** Whether a function name is known (own, lazy or formulajs). */
 export function isKnownFunction(name: string): boolean {
   const upper = name.toUpperCase();
