@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
@@ -9,7 +10,11 @@ export default defineConfig({
   plugins: [react()],
   base: "/",
   // Several suites build real encrypted sheets; under a loaded machine 5 s is too tight.
-  test: { testTimeout: 30_000 },
+  // The long random-operation (fuzz) suites take 5-20 minutes each: they run only with FUZZ=1 (pnpm test:fuzz).
+  test: {
+    testTimeout: 30_000,
+    exclude: process.env.FUZZ ? configDefaults.exclude : [...configDefaults.exclude, "src/lib/v2/advFuzz[ACDE].test.ts"],
+  },
   resolve: {
     alias: [
       { find: "@formstr/sheets-formula", replacement: here("./packages/sheets-formula/src/index.ts") },

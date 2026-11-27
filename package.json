@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:fuzz": "node tools/test-fuzz.mjs",
     "parity": "node tools/parity-progress.mjs"
   },
   "dependencies": {

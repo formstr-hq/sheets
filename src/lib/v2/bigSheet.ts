@@ -15,6 +15,7 @@ import { frame } from "./codec";
 import { downloadTabBody } from "./blossom";
 import { editLayout, type StructEdit } from "./layoutEdit";
 import type { ColumnFilter } from "./bigFilter";
+import { ArrayAxis, RunAxis, dropSheetRefs, formulaFromIds, formulaToIds, hasIdRefs, tombstonesFor, type RefContext, type Tombstones } from "./idRefs";
 import { FRAME_TYPE_TAB_INDEX, ROOT_SCHEMA, ROOT_VERSION, resolveChunks, type ChunkEntry, type RootTab, type SheetRootV2 } from "./root";
 import { randomId } from "../utils";
 
@@ -34,6 +35,8 @@ export const MAX_EDIT_CELLS = 200_000;
 const MAX_COLUMNS = 16_384;
 const MAX_INSERT_ROWS = 100_000;
 const UNDO_STEPS = 100;
+/** A tab's chunk list bigger than this (as JSON) is stored in an index blob instead of in the root. */
+const INDEX_AT_BYTES = 16 * 1024;
 
 export interface CellAddress {
   tab: number;
@@ -76,12 +79,14 @@ export interface TabLayout {
   /** A filter by the values of one column: its `hidden` rows are hidden on top of rows hidden by hand. */
   filter?: ColumnFilter;
   merges?: { r: number; c: number; rs: number; cs: number }[];
+  /** Rows and columns that were deleted (the neighbours they had), so formulas stored by id can still resolve. */
+  tombs?: { rows: Tombstones; cols: Tombstones };
   /** Pictures floating over the cells, each anchored to a cell. */
   images?: { id: string; src: string; row: number; col: number; dx: number; dy: number; width: number; height: number }[];
   borders?: { r1: number; c1: number; r2: number; c2: number; type: "all" | "outside" | "inside" | "top" | "bottom" | "left" | "right" | "none"; color?: string; style?: string }[];
 }
 
-const LAYOUT_KEYS = ["columnWidths", "rowHeights", "hiddenRows", "hiddenColumns", "frozen", "zoom", "conditionalFormats", "filter", "merges", "borders", "images"] as const;
+const LAYOUT_KEYS = ["columnWidths", "rowHeights", "hiddenRows", "hiddenColumns", "frozen", "zoom", "conditionalFormats", "filter", "merges", "borders", "images", "tombs"] as const;
 
 export interface BigTab {
   layout: TabLayout;
@@ -106,6 +111,8 @@ export class BigSheetStore {
   private cache = new Map<string, ChunkBody>();
   private loading = new Map<string, Promise<ChunkBody>>();
   private dirty = new Set<string>();
+  /** Chunks a structural edit has loaded and is still working on: the cache must not evict them (they are not dirty yet). */
+  private held = new Set<string>();
   private undoStack: UndoStep[] = [];
   /** Was the last undo() a structural one (rows, columns, tabs)? Then the caller has to rebuild what it shows. */
   structuralUndo = false;
@@ -116,9 +123,19 @@ export class BigSheetStore {
   /** Ids for rows and columns this device adds. */
   private readonly idTag = newDeviceTag();
   private idCounter = 0;
+  /** Bumped by every insert or delete of rows or columns; tells loaded chunks whose formulas still use the old positions. */
+  private epoch = 0;
+  private bodyEpoch = new Map<string, number>();
+  /** Tabs whose chunk list must be written on the next save even though none of their chunks changed. */
+  private forceTabs = new Set<number>();
+  /** The workbook's "formulas by id" flag as this store has it. It reaches the root only when saved: the root object may be shared with other stores. */
+  private byId: boolean;
+  /** True while `open` reads the first chunks: they are not converted yet (see open). */
+  private opening = false;
 
   constructor(root: SheetRootV2, servers: string[], env: BlossomEnv = {}) {
     this.root = root;
+    this.byId = root.refs === "id";
     this.servers = [...root.servers, ...servers];
     this.env = env;
   }
@@ -205,6 +222,8 @@ export class BigSheetStore {
       if (meta.color) sheet.color = meta.color;
       if (meta.showGridLines !== undefined) sheet.showGridLines = meta.showGridLines;
       for (const key of LAYOUT_KEYS) if (tab.layout[key] !== undefined) (sheet as unknown as Record<string, unknown>)[key] = structuredClone(tab.layout[key]);
+      // A document always holds A1 formulas and has no use for the record of deleted rows (see parseRootV2).
+      delete (sheet as { tombs?: unknown }).tombs;
       sheets.push(sheet);
     }
     return {
@@ -236,16 +255,147 @@ export class BigSheetStore {
         layout: {},
       });
     }
-    await Promise.all(
-      this.tabs.map(async (tab, index) => {
-        if (tab.chunks.length === 0) return;
-        const head = await this.load(index, 0);
-        tab.rows = Math.max(tab.rows, head.rowCount ?? 0, 100);
-        tab.cols = Math.max(tab.cols, head.colCount ?? 0, this.tabRoots[index].cols?.length ?? 0);
-        tab.colIds = padCols(this.tabRoots[index].cols, tab.cols);
-        for (const key of LAYOUT_KEYS) if (head[key] !== undefined) (tab.layout as Record<string, unknown>)[key] = head[key];
-      }),
-    );
+    // The first chunks are read before anything is known about the columns and deleted rows of the tabs
+    // (they sit in these very chunks), so their formulas are converted afterwards.
+    this.opening = true;
+    try {
+      await Promise.all(
+        this.tabs.map(async (tab, index) => {
+          if (tab.chunks.length === 0) return;
+          const head = await this.load(index, 0);
+          tab.rows = Math.max(tab.rows, head.rowCount ?? 0, 100);
+          tab.cols = Math.max(tab.cols, head.colCount ?? 0, this.tabRoots[index].cols?.length ?? 0);
+          tab.colIds = padCols(this.tabRoots[index].cols, tab.cols);
+          for (const key of LAYOUT_KEYS) if (head[key] !== undefined) (tab.layout as Record<string, unknown>)[key] = head[key];
+        }),
+      );
+    } finally {
+      this.opening = false;
+    }
+    if (this.refsById) {
+      this.tabs.forEach((tab, index) => {
+        const head = this.cache.get(this.key(index, 0));
+        if (head && tab.chunks.length > 0) head.cells = this.fromStoredCells(index, head.cells ?? {});
+      });
+    }
+  }
+
+  // --- formulas stored by id (spec 4.1) ------------------------------------------------------
+  //
+  // In memory a formula is always A1 text, so the grid and the calculation engine do not change. When the
+  // workbook stores formulas by id (root.refs), they are converted when a chunk is read and when it is
+  // saved. An insert or delete then needs no rewrite of the chunks that are not open.
+
+  /** Set to false to keep a workbook on positional formulas (rewritten in every chunk on each insert or delete). */
+  allowRefsById = true;
+
+  /** Does this workbook store formulas by id? */
+  get refsById(): boolean {
+    return this.byId;
+  }
+
+  /** The row ids of a tab in order, from the chunk list (a chunk without recorded ids has the legacy ones). */
+  private runsOf(tab: number): RowRun[] {
+    return concatRuns(...this.tabs[tab].chunks.map((entry) => entry.runs ?? legacyRows(entry.rowStart, entry.rowCount)));
+  }
+
+  /** What is needed to convert formulas between A1 and ids, as of now. `current` is the tab the formula lives on. */
+  refContext(current: number): RefContext {
+    return {
+      current: this.tabRoots[current].id,
+      tabs: this.tabs.map((info, i) => ({
+        id: this.tabRoots[i].id,
+        name: info.name,
+        rows: new RunAxis(this.runsOf(i), info.layout.tombs?.rows),
+        cols: new ArrayAxis(padCols(info.colIds, info.cols), info.layout.tombs?.cols),
+      })),
+    };
+  }
+
+  private fromStoredCells(tab: number, cells: Record<string, WorkbookCell>): Record<string, WorkbookCell> {
+    let ctx: RefContext | undefined;
+    let out = cells;
+    for (const [key, cell] of Object.entries(cells)) {
+      if (!cell.formula || !hasIdRefs(cell.formula)) continue;
+      ctx ??= this.refContext(tab);
+      if (out === cells) out = { ...cells };
+      out[key] = { ...cell, formula: formulaFromIds(cell.formula, ctx) };
+    }
+    return out;
+  }
+
+  private toStoredCells(tab: number, cells: Record<string, WorkbookCell>): Record<string, WorkbookCell> {
+    let ctx: RefContext | undefined;
+    let out = cells;
+    for (const [key, cell] of Object.entries(cells)) {
+      if (!cell.formula) continue;
+      ctx ??= this.refContext(tab);
+      if (out === cells) out = { ...cells };
+      out[key] = { ...cell, formula: formulaToIds(cell.formula, ctx) };
+    }
+    return out;
+  }
+
+  /**
+   * Switches the workbook to formulas stored by id. It needs every chunk's row ids (so every chunk is read
+   * once) and the chunks that hold formulas are rewritten on the next save. Returns false, changing nothing,
+   * when more than `maxFormulaChunks` chunks hold formulas (they would all have to stay in memory until saved).
+   */
+  async enableRefsById(maxFormulaChunks: number, onProgress?: (done: number, total: number) => void): Promise<boolean> {
+    if (this.refsById) return true;
+    const total = this.tabs.reduce((sum, tab) => sum + tab.chunks.length, 0);
+    const runs: { tab: number; chunk: number; runs: RowRun[] }[] = [];
+    const withFormulas = new Map<string, ChunkBody>();
+    let done = 0;
+    for (let t = 0; t < this.tabs.length; t++) {
+      for (let c = 0; c < this.tabs[t].chunks.length; c++) {
+        const entry = this.tabs[t].chunks[c];
+        const body = await this.load(t, c);
+        runs.push({ tab: t, chunk: c, runs: entry.rowCount > 0 ? padRuns(body.rows ?? [], entry.rowCount) : [] });
+        if (Object.values(body.cells ?? {}).some((cell) => cell.formula)) {
+          withFormulas.set(this.key(t, c), body);
+          if (withFormulas.size > maxFormulaChunks) return false;
+        }
+        onProgress?.(++done, total);
+      }
+    }
+    // Ids must be unique within a tab, or a row id would name two rows.
+    for (let t = 0; t < this.tabs.length; t++) {
+      if (hasDuplicateIds(concatRuns(...runs.filter((item) => item.tab === t).map((item) => item.runs)))) return false;
+    }
+    for (const item of runs) {
+      const entry = this.tabs[item.tab].chunks[item.chunk];
+      this.tabs[item.tab].chunks[item.chunk] = { ...entry, runs: item.runs };
+    }
+    this.byId = true;
+    // The chunks with formulas must be written again (with ids); they stay in memory until then.
+    for (const [key, body] of withFormulas) {
+      this.cache.set(key, body);
+      this.bodyEpoch.set(key, this.epoch);
+      this.dirty.add(key);
+    }
+    for (let t = 0; t < this.tabs.length; t++) this.forceTabs.add(t);
+    this.metaDirty = true;
+    this.emit();
+    return true;
+  }
+
+  /**
+   * After an insert or delete: rewrites the formulas of every chunk that was open before it (their text still
+   * names the old positions) with `rewrite`. Chunks read after it were converted with the new positions.
+   * Does not mark anything as changed: the ids they are saved with did not change.
+   */
+  rewriteStaleFormulas(rewrite: (tab: number, formula: string) => string): void {
+    for (const [key, body] of this.cache) {
+      if ((this.bodyEpoch.get(key) ?? -1) >= this.epoch) continue;
+      const tab = Number(key.slice(0, key.indexOf(":")));
+      // New cell objects, not changes in place: an undo snapshot still holds the old ones.
+      const cells = body.cells ?? {};
+      for (const [cellKey, cell] of Object.entries(cells)) {
+        if (cell.formula) cells[cellKey] = { ...cell, formula: rewrite(tab, cell.formula) };
+      }
+      this.bodyEpoch.set(key, this.epoch);
+    }
   }
 
   subscribe(listener: () => void): () => void {
@@ -282,6 +432,13 @@ export class BigSheetStore {
       return Promise.resolve(hit);
     }
     let pending = this.loading.get(key);
+    if (!pending && chunk > 0 && this.tabs[tab].chunks[chunk]?.rowCount === 0) {
+      // Every row of this chunk was deleted: its blob still holds them, but they are gone.
+      const empty: ChunkBody = { rows: [], cells: {} };
+      this.cache.set(key, empty);
+      this.bodyEpoch.set(key, this.epoch);
+      return Promise.resolve(empty);
+    }
     if (!pending) {
       const entry = this.tabs[tab].chunks[chunk];
       pending = (this.fetchBody(entry.ref, this.root.servers) as Promise<StoredChunkBody>).then((stored) => {
@@ -294,12 +451,13 @@ export class BigSheetStore {
         // The current column ids (they change when columns are inserted or deleted).
         const colIds = this.tabs[tab].colIds.length > 0 ? this.tabs[tab].colIds : this.tabRoots[tab].cols;
         const read = readChunk(stored, entry.rowStart, entry.rowCount, colIds);
-        const body: ChunkBody = { ...read.layout, rows: read.rows, cells: read.cells };
+        const body: ChunkBody = { ...read.layout, rows: read.rows, cells: this.refsById && !this.opening ? this.fromStoredCells(tab, read.cells) : read.cells };
         this.cache.set(key, body);
+        this.bodyEpoch.set(key, this.epoch);
         this.loading.delete(key);
         for (const old of this.cache.keys()) {
           if (this.cache.size <= CACHE_CHUNKS) break;
-          if (!this.dirty.has(old) && old !== key) this.cache.delete(old);
+          if (!this.dirty.has(old) && !this.held.has(old) && old !== key) this.cache.delete(old);
         }
         this.onChunkLoaded?.(tab, chunk);
         this.emit();
@@ -564,15 +722,37 @@ export class BigSheetStore {
     if (edit.kind === "insert" && edit.axis === "row" && edit.count > MAX_INSERT_ROWS) {
       throw new Error(`Insert at most ${MAX_INSERT_ROWS.toLocaleString()} rows at once.`);
     }
-    // The first chunk carries the size and look, so it is always rewritten.
-    await this.load(tab, 0);
+    // The first chunk carries the size and look, so it is always rewritten. It stays in memory until the edit is done.
+    const headKey = this.key(tab, 0);
+    const heldBefore = this.held.has(headKey);
+    this.held.add(headKey);
+    try {
+      await this.load(tab, 0);
+      await this.applyEditHeld(tab, edit, info);
+    } finally {
+      if (!heldBefore) this.held.delete(headKey);
+    }
+  }
+
+  private async applyEditHeld(tab: number, edit: StructEdit, info: BigTab): Promise<void> {
     const finish = this.beginUndoableChange();
+    // Rows and columns about to be deleted leave tombstones, so formulas that name them can still resolve.
+    let tombs: Tombstones = {};
+    if (this.refsById && edit.kind === "delete") {
+      tombs = tombstonesFor(edit.axis === "row" ? new RunAxis(this.runsOf(tab)) : new ArrayAxis(padCols(info.colIds, info.cols)), edit.index, edit.count);
+    }
     if (edit.axis === "row") await (edit.kind === "insert" ? this.insertRows(tab, edit) : this.deleteRows(tab, edit));
     else if (edit.kind === "insert") this.insertCols(tab, edit);
     else this.deleteCols(tab, edit);
+    this.epoch++;
 
     const head = this.cache.get(this.key(tab, 0)) as ChunkBody;
     info.layout = editLayout(info.layout, edit);
+    if (Object.keys(tombs).length > 0) {
+      const have = info.layout.tombs ?? { rows: {}, cols: {} };
+      const axisKey = edit.axis === "row" ? "rows" : "cols";
+      info.layout = { ...info.layout, tombs: { ...have, [axisKey]: { ...have[axisKey], ...tombs } } };
+    }
     for (const key of LAYOUT_KEYS) {
       const value = info.layout[key];
       if (value === undefined) delete head[key];
@@ -596,7 +776,7 @@ export class BigSheetStore {
       body.cells = moveCells(body.cells, (row, col) => [row >= local ? row + edit.count : row, col]);
       body.rows = insertRuns(padRuns(body.rows ?? [], entry.rowCount), local, mintRows(this.idTag, this.idCounter, edit.count));
       this.idCounter += edit.count;
-      info.chunks[k] = { ...entry, rowCount: entry.rowCount + edit.count };
+      info.chunks[k] = { ...entry, rowCount: entry.rowCount + edit.count, ...(this.refsById ? { runs: body.rows } : {}) };
       for (let j = k + 1; j < info.chunks.length; j++) info.chunks[j] = { ...info.chunks[j], rowStart: info.chunks[j].rowStart + edit.count };
       this.dirty.add(this.key(tab, k));
     }
@@ -620,7 +800,13 @@ export class BigSheetStore {
         const covered = from <= entry.rowStart && to >= entry.rowStart + entry.rowCount;
         if (!covered || k === 0) partial.push(k);
       }
-      for (const k of partial) await this.load(tab, k);
+      const heldKeys = partial.map((k) => this.key(tab, k)).filter((key) => !this.held.has(key));
+      for (const key of heldKeys) this.held.add(key);
+      try {
+        for (const k of partial) await this.load(tab, k);
+      } finally {
+        for (const key of heldKeys) this.held.delete(key);
+      }
       const chunks = [...info.chunks];
       for (let k = 0; k < chunks.length; k++) {
         const entry = chunks[k];
@@ -642,7 +828,13 @@ export class BigSheetStore {
             this.cache.delete(this.key(tab, k));
             this.dirty.delete(this.key(tab, k));
           }
-          chunks[k] = { ...entry, rowStart: start - removed, rowCount: entry.rowCount - gone, cells: partial.includes(k) ? entry.cells : 0 };
+          chunks[k] = {
+            ...entry,
+            rowStart: start - removed,
+            rowCount: entry.rowCount - gone,
+            cells: partial.includes(k) ? entry.cells : 0,
+            ...(this.refsById ? { runs: partial.includes(k) ? (this.cache.get(this.key(tab, k)) as ChunkBody).rows : [] } : {}),
+          };
           removed += gone;
         } else {
           chunks[k] = { ...entry, rowStart: start - removed };
@@ -734,7 +926,9 @@ export class BigSheetStore {
     this.tabs.push({ name, chunks: [entry], indexed: false, rows, cols, colIds: padCols([], cols), layout: {} });
     const body: ChunkBody = { rows: mintRows(this.idTag, this.idCounter, rows), cells: {} };
     this.idCounter += rows;
+    if (this.refsById) this.tabs[index].chunks[0] = { ...entry, runs: body.rows };
     this.cache.set(this.key(index, 0), body);
+    this.bodyEpoch.set(this.key(index, 0), this.epoch);
     this.dirty.add(this.key(index, 0));
     this.metaDirty = true;
     finish();
@@ -804,6 +998,14 @@ export class BigSheetStore {
       return next;
     };
     this.cache = move(this.cache);
+    const epochs = new Map<string, number>();
+    for (const [key, value] of this.bodyEpoch) {
+      const [tab, chunk] = key.split(":").map(Number);
+      const now = where.get(tab);
+      if (now !== undefined) epochs.set(this.key(now, chunk), value);
+    }
+    this.bodyEpoch = epochs;
+    this.forceTabs = new Set([...this.forceTabs].flatMap((tab) => (where.has(tab) ? [where.get(tab) as number] : [])));
     const dirty = new Set<string>();
     for (const key of this.dirty) {
       const [tab, chunk] = key.split(":").map(Number);
@@ -812,6 +1014,21 @@ export class BigSheetStore {
     }
     this.dirty = dirty;
     this.loading.clear();
+    // Formulas that name a tab that is now gone read #REF! whichever chunk they are in (the ids of unopened chunks do already).
+    const kept = new Set(order);
+    const survivors = new Set(order.map((old) => this.tabs[old].name.toLowerCase()));
+    const dropped = this.tabs.filter((_, old) => !kept.has(old)).map((tab) => tab.name).filter((name) => !survivors.has(name.toLowerCase()));
+    if (this.refsById && dropped.length > 0) {
+      for (const body of this.cache.values()) {
+        const cells = body.cells ?? {};
+        for (const [cellKey, cell] of Object.entries(cells)) {
+          if (cell.formula) {
+            const next = dropSheetRefs(cell.formula, dropped);
+            if (next !== cell.formula) cells[cellKey] = { ...cell, formula: next };
+          }
+        }
+      }
+    }
     this.tabs = order.map((old) => this.tabs[old]);
     this.tabRoots = order.map((old, now) => ({ ...this.tabRoots[old], order: now }));
     this.metaDirty = true;
@@ -835,7 +1052,11 @@ export class BigSheetStore {
       const chunk = this.chunkFor(item.tab, item.row);
       const key = this.key(item.tab, chunk);
       const body = this.cache.get(key);
-      if (!body) continue; // edited chunks are pinned, so this does not happen
+      if (!body) {
+        // Not pinned any more (it was saved, then left the cache): fetch it, then write the change.
+        void this.load(item.tab, chunk).then(() => this.apply([item], side, markDirty), () => undefined);
+        continue;
+      }
       const cells = (body.cells ??= {});
       const cellKey = `${item.row - this.tabs[item.tab].chunks[chunk].rowStart}:${item.col}`;
       const value = item[side];
@@ -859,20 +1080,41 @@ export class BigSheetStore {
     const keys = [...this.dirty];
     const staged: StagedBlob[] = [];
     const targets: { tab: number; chunk: number }[] = [];
+    // First every changed chunk gets its row ids (rows added past the end get new ids when formulas are stored by id),
+    // so that all ids are known before any formula is converted.
+    const idsOf = new Map<string, RowRun[]>();
     for (const key of keys) {
       const [tab, chunk] = key.split(":").map(Number);
       const body = this.cache.get(key) as ChunkBody;
       const entry = this.tabs[tab].chunks[chunk];
       const next = this.tabs[tab].chunks[chunk + 1];
       if (!next) entry.rowCount = Math.max(entry.rowCount, this.tabs[tab].rows - entry.rowStart);
+      const have = rowCountOf(body.rows ?? []);
+      const missing = entry.rowCount - have;
+      let ids: RowRun[];
+      if (this.refsById) {
+        ids = concatRuns(body.rows ?? [], mintRows(this.idTag, this.idCounter, Math.max(0, missing)));
+        this.idCounter += Math.max(0, missing);
+        body.rows = ids;
+        this.tabs[tab].chunks[chunk] = { ...entry, runs: ids };
+      } else {
+        ids = concatRuns(body.rows ?? [], legacyRows(entry.rowStart + have, missing));
+      }
+      idsOf.set(key, ids);
+    }
+    for (const key of keys) {
+      const [tab, chunk] = key.split(":").map(Number);
+      const body = this.cache.get(key) as ChunkBody;
       if (chunk === 0) {
         body.rowCount = this.tabs[tab].rows;
         body.colCount = this.tabs[tab].cols;
       }
-      const { rows, cells, ...layout } = body;
-      const have = rowCountOf(rows ?? []);
-      const ids = concatRuns(rows ?? [], legacyRows(entry.rowStart + have, entry.rowCount - have));
-      const stored = writeChunk({ rows: ids, cells: cells ?? {}, layout, hasIds: true }, this.tabs[tab].colIds);
+      const { rows: _rows, cells, ...layout } = body;
+      void _rows;
+      const stored = writeChunk(
+        { rows: idsOf.get(key) as RowRun[], cells: this.refsById ? this.toStoredCells(tab, cells ?? {}) : (cells ?? {}), layout, hasIds: true },
+        this.tabs[tab].colIds,
+      );
       staged.push(await encryptFrame(await frame(stored)));
       targets.push({ tab, chunk });
     }
@@ -883,7 +1125,11 @@ export class BigSheetStore {
       const body = this.cache.get(this.key(tab, chunk)) as ChunkBody;
       this.tabs[tab].chunks[chunk] = { ...entry, ref: staged[i].ref, cells: Object.keys(body.cells ?? {}).length };
     });
-    const touched = [...new Set(targets.map((t) => t.tab))];
+    const touched = [...new Set([...targets.map((t) => t.tab), ...this.forceTabs])].filter((tab) => tab < this.tabs.length);
+    // The root is one small event: a chunk list that has grown (each entry now also holds its row ids) moves into an index blob.
+    for (const tab of touched) {
+      if (!this.tabs[tab].indexed && JSON.stringify(this.tabs[tab].chunks).length > INDEX_AT_BYTES) this.tabs[tab].indexed = true;
+    }
     const indexOf = new Map<number, number>();
     for (const tab of touched) {
       if (!this.tabs[tab].indexed) continue;
@@ -904,8 +1150,11 @@ export class BigSheetStore {
       const at = indexOf.get(index);
       return { ...tab, cols: [...this.tabs[index].colIds], chunks: at === undefined ? [...this.tabs[index].chunks] : { index: uploaded[at].ref } };
     });
+    const { refs: _inherited, ...rest } = this.root;
+    void _inherited;
     const root: SheetRootV2 = {
-      ...this.root,
+      ...rest,
+      ...(this.byId ? { refs: "id" as const } : {}),
       updatedAt: Date.now(),
       servers: [...holders],
       // The tab that was open may have been deleted since.
@@ -913,6 +1162,7 @@ export class BigSheetStore {
       tabs: tabRoots,
     };
     Object.assign(this.root, root);
+    if (!this.byId) delete this.root.refs; // Object.assign cannot remove a key another store set on the shared object
     this.tabRoots = root.tabs.map((tab) => ({ ...tab }));
     this.markSaved();
     return root;
@@ -935,6 +1185,7 @@ export class BigSheetStore {
   /** Everything now counts as saved (after `save`, or after an in-memory store was written out as a document). */
   markSaved(): void {
     this.metaDirty = false;
+    this.forceTabs.clear();
     this.dirty.clear();
     // Structural steps describe the state from before this save; once it is saved they (and the steps below them) cannot be undone.
     let last = -1;
@@ -944,6 +1195,21 @@ export class BigSheetStore {
     if (last >= 0) this.undoStack.splice(0, last + 1);
     this.emit();
   }
+}
+
+/** Does any row id appear twice in these runs? */
+function hasDuplicateIds(runs: RowRun[]): boolean {
+  const byTag = new Map<string, [number, number][]>();
+  for (const [tag, start, length] of runs) {
+    const list = byTag.get(tag) ?? [];
+    list.push([start, start + length]);
+    byTag.set(tag, list);
+  }
+  for (const list of byTag.values()) {
+    list.sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < list.length; i++) if (list[i][0] < list[i - 1][1]) return true;
+  }
+  return false;
 }
 
 /** The cells with each position moved by `move` (null drops the cell). */
